@@ -4,7 +4,7 @@ import { PostgresEngine } from './core/postgres-engine.ts';
 import { loadConfig, toEngineConfig } from './core/config.ts';
 import type { BrainEngine } from './core/engine.ts';
 
-const VERSION = '0.1.0';
+const VERSION = '0.2.0';
 
 async function main() {
   const args = process.argv.slice(2);
