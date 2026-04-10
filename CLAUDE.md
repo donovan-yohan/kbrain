@@ -130,12 +130,32 @@ upgrade, not document the implementation.
 
 ## Version migrations
 
-When shipping a GBrain version that requires agent action after upgrade (schema
-changes, changed defaults, deprecated commands), create a migration file at
-`skills/migrations/v[version].md`. The auto-update agent reads these files
-post-upgrade and executes the directives. See GBRAIN_SKILLPACK.md Section 17.
+Create a migration file at `skills/migrations/v[version].md` when a release
+includes changes that existing users need to act on. The auto-update agent
+reads these files post-upgrade (Section 17, Step 4) and executes them.
 
-If a release only has bug fixes with no behavior changes, no migration file is needed.
+**You need a migration file when:**
+- New setup step that existing installs don't have (e.g., v0.5.0 added live sync,
+  existing users need to set it up, not just new installs)
+- New SKILLPACK section with a MUST ADD setup requirement
+- Schema changes that require `gbrain init` or manual SQL
+- Changed defaults that affect existing behavior
+- Deprecated commands or flags that need replacement
+- New verification steps that should run on existing installs
+- New cron jobs or background processes that should be registered
+
+**You do NOT need a migration file when:**
+- Bug fixes with no behavior changes
+- Documentation-only improvements (the agent re-reads docs automatically)
+- New optional features that don't affect existing setups
+- Performance improvements that are transparent
+
+**The key test:** if an existing user upgrades and does nothing else, will their
+brain work worse than before? If yes, migration file. If no, skip it.
+
+Write migration files as agent instructions, not technical notes. Tell the agent
+what to do, step by step, with exact commands. See `skills/migrations/v0.5.0.md`
+for the pattern.
 
 ## Schema state tracking
 
