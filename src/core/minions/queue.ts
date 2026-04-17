@@ -616,7 +616,7 @@ export class MinionQueue {
   /** Update job progress (token-fenced). */
   async updateProgress(id: number, lockToken: string, progress: unknown): Promise<boolean> {
     const rows = await this.engine.executeRaw<Record<string, unknown>>(
-      `UPDATE minion_jobs SET progress = $1, updated_at = now()
+      `UPDATE minion_jobs SET progress = $1::jsonb, updated_at = now()
        WHERE id = $2 AND status = 'active' AND lock_token = $3
        RETURNING id`,
       [progress, id, lockToken]
