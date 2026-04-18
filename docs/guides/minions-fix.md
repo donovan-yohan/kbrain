@@ -1,43 +1,66 @@
-# Minions fix — repairing a half-migrated v0.11.0 install
+# Minions fix — repairing a half-migrated install
 
-**tl;dr:** if your gbrain upgrade to v0.11.0 left Minions half-wired
-(no preferences, autopilot still inline, or cron jobs still on
-`agentTurn`), run:
-
-```bash
-gbrain upgrade && gbrain apply-migrations --yes
-```
-
-If you're stuck on a v0.11.0 binary that predates `apply-migrations`,
-paste the stopgap:
+**tl;dr:** on v0.11.1+ everything should self-heal. If Minions is partially
+set up (no `~/.gbrain/preferences.json`, autopilot still inline, cron jobs
+still on `agentTurn`), run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/v0.11.1/scripts/fix-v0.11.0.sh | bash
+gbrain apply-migrations --yes
 ```
 
-Then upgrade + run `apply-migrations` once v0.11.1 is installed.
+It's idempotent. On v0.11.1 installs that already migrated it's a cheap
+no-op.
 
-## What went wrong
+## Context
 
-The v0.11.0 release shipped the Minions schema, worker, queue, and
-migration skill at `skills/migrations/v0.11.0.md`. But `gbrain upgrade`'s
-`runPostUpgrade()` only printed the feature pitch — it never executed
-the migration steps. Users ended up with:
+v0.11.0 shipped the Minions schema, queue, worker, and migration skill —
+but the migration skill itself never fired on upgrade. `runPostUpgrade`
+printed the feature pitch and stopped. v0.11.0 was never released
+publicly; v0.11.1 is the first public Minions ship and fixes the
+mega-bug (migration fires automatically on `gbrain upgrade` and via
+the `postinstall` hook).
 
-- Schema migrated to v7 (thanks to `gbrain init` on upgrade).
-- Minions table created.
-- Worker handlers registered (but no worker daemon running).
-- No `~/.gbrain/preferences.json` (so `minion_mode` was unset).
-- Autopilot still running sync/extract/embed inline, not dispatching
-  through Minions.
-- AGENTS.md + cron manifests still referencing the old `sessions_spawn`
-  + `agentTurn` routes.
+If you're on a pre-v0.11.1 branch build (e.g. running the
+`minions-jobs` branch before v0.11.1 tagged), Minions may be installed
+but not wired: schema is v7, but no `~/.gbrain/preferences.json`,
+autopilot still runs inline, cron jobs still call `agentTurn`.
 
-## The fix (v0.11.1 binary or later)
+This guide covers both paths: the canonical v0.11.1+ fix, and the
+stopgap for pre-v0.11.1 binaries that don't have `apply-migrations`.
 
-`gbrain apply-migrations` is the canonical repair. It reads
-`~/.gbrain/migrations/completed.jsonl`, sees v0.11.0 is pending (or
-stopgap-partial), and runs the orchestrator's seven phases:
+## Detecting the half-migrated state
+
+```bash
+gbrain doctor
+```
+
+If the install is half-migrated, you'll see:
+
+```
+[FAIL] minions_migration: MINIONS HALF-INSTALLED (partial migration: 0.11.0). Run: gbrain apply-migrations --yes
+```
+
+or
+
+```
+[FAIL] minions_config: MINIONS HALF-INSTALLED (schema v7+ but no ~/.gbrain/preferences.json). Run: gbrain apply-migrations --yes
+```
+
+For a machine-readable report (cron-friendly):
+
+```bash
+gbrain skillpack-check --quiet && echo healthy || echo needs_action
+gbrain skillpack-check | jq -r '.actions[]'    # prints the exact commands to run
+```
+
+## The fix (v0.11.1 or later)
+
+```bash
+gbrain apply-migrations --yes
+```
+
+Reads `~/.gbrain/migrations/completed.jsonl`, diffs against the TS
+migration registry, runs whatever's pending. Seven phases:
 
 ```
 A. Schema        gbrain init --migrate-only
@@ -50,34 +73,40 @@ F. Install       gbrain autopilot --install (env-aware)
 G. Record        append completed.jsonl status:"complete"
 ```
 
-If Phase E emits TODOs for host-specific handlers (Wintermute's
-~29 non-gbrain crons, for example), the migration finishes with
-`status: "partial"`. Your host agent walks the TODOs using
-`skills/migrations/v0.11.0.md` + `docs/guides/plugin-handlers.md`, ships
-handler registrations in the host repo, then you re-run
-`gbrain apply-migrations --yes` — the newly-registerable cron entries
-get rewritten and the JSONL rows mark `status: "complete"`.
+If Phase E emits TODOs for host-specific handlers (e.g. Wintermute's
+~29 non-gbrain crons), the migration finishes with `status: "partial"`.
+Your host agent walks the TODOs using `skills/migrations/v0.11.0.md` +
+`docs/guides/plugin-handlers.md`, ships handler registrations in the
+host repo, then re-runs `gbrain apply-migrations --yes`. Newly
+registerable cron entries get rewritten and the JSONL rows mark
+`status: "complete"`.
 
-## The stopgap (v0.11.0 binary, no apply-migrations yet)
+## The stopgap (pre-v0.11.1 binary, no apply-migrations yet)
 
-`scripts/fix-v0.11.0.sh` is a shell script that does what apply-migrations
-does from a bash environment without depending on any new CLI. It:
+If you're stuck on a branch build that doesn't have `apply-migrations`:
 
-1. Runs `gbrain init --migrate-only` to ensure schema v7.
-2. Runs `gbrain jobs smoke`.
-3. Prompts for `minion_mode` (pain_triggered default on non-TTY).
-4. Writes `~/.gbrain/preferences.json` atomically.
-5. Appends `~/.gbrain/migrations/completed.jsonl` with
-   `status: "partial"` + `apply_migrations_pending: true` so a later
-   v0.11.1 `apply-migrations` run picks up where it left off.
-6. Detects host agent repos and **prints** rewrite instructions (never
-   auto-edits from a curl-piped script — too high blast radius).
-7. Tells the user to run `gbrain autopilot --install` as the one-stop
-   finisher (autopilot forks the Minions worker as a child; no separate
-   daemon to manage).
+```bash
+curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/v0.11.1/scripts/fix-v0.11.0.sh | bash
+```
 
-Once v0.11.1 is installed, the stopgap retires: the canonical fix
-becomes `gbrain upgrade && gbrain apply-migrations`.
+This bash script does what apply-migrations does from a shell environment:
+
+1. `gbrain init --migrate-only` — schema v7.
+2. `gbrain jobs smoke` — verify Minions health.
+3. Prompt for `minion_mode` (defaults `pain_triggered` on non-TTY).
+4. Write `~/.gbrain/preferences.json` atomically.
+5. Append `~/.gbrain/migrations/completed.jsonl` with `status: "partial"`
+   and `apply_migrations_pending: true`. That partial record is the
+   signal to v0.11.1's `apply-migrations` to pick up remaining phases
+   after the user upgrades.
+6. Detect host agent repos and PRINT rewrite instructions (never
+   auto-edits from a curl-piped script).
+7. Print the next step: `Run: gbrain autopilot --install`.
+
+Once v0.11.1 is installed, re-run `gbrain apply-migrations --yes` to
+finish the remaining phases (host rewrites + autopilot install). The
+stopgap's `status: "partial"` record is designed to resume cleanly
+(it doesn't poison the permanent migration path).
 
 ## Verify the fix landed
 
@@ -97,6 +126,10 @@ gbrain jobs list
 
 # 5. Any host-specific TODOs still pending
 cat ~/.gbrain/migrations/pending-host-work.jsonl 2>/dev/null || echo "(none — all host work is done)"
+
+# 6. Doctor + skillpack-check should both be clean
+gbrain doctor
+gbrain skillpack-check --quiet && echo ok
 ```
 
 ## If the fix fails
@@ -119,6 +152,7 @@ Each phase is idempotent. Re-running is safe. Common failure modes:
 ## Related
 
 - `skills/migrations/v0.11.0.md` — full migration skill for host agents.
+- `skills/skillpack-check/SKILL.md` — when and how to run the health check.
 - `docs/guides/plugin-handlers.md` — plugin contract for host-specific
   handlers.
 - `skills/conventions/cron-via-minions.md` — the canonical cron rewrite

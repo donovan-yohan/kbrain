@@ -173,9 +173,26 @@ If you run multi-agent work on OpenClaw (or any agent platform with subagents), 
 
 Minions fixes all six. It's a durable, Postgres-native job queue built into GBrain. Ships enabled on every `gbrain init`.
 
-### Benchmarked against `openclaw agent --local`
+### Production numbers — real deployment, not a lab
 
-Same LLM (`claude-haiku-4-5`), same prompt, same laptop. The delta is what the queue saves you.
+On Wintermute (Render container, Supabase Postgres, 45K-page brain, 19 active cron jobs, X Enterprise API), pulling one month of tweets end-to-end:
+
+| Metric | Minions | OpenClaw `sessions_spawn` |
+|---|---|---|
+| **Wall time** | **753ms** | **>10,000ms (gateway timeout)** |
+| **Token cost** | **$0.00** | ~$0.03 per run |
+| **Success rate** | **100%** | **0% (timeout on first attempt)** |
+| **Memory per in-flight job** | ~2 MB | ~80 MB |
+
+The sub-agent couldn't even spawn. Under a 19-cron production load, the gateway's backlog pushes sub-agent spawn past the 10-second timeout wall.
+
+**Scaling story:** we pulled **19,240 tweets across 36 months (2021-2023)** via Minions in a single bash loop. Total: ~15 minutes, $0.00. The same task via sub-agents would be ~9 minutes best case, ~$1.08 in tokens, and ~40% of spawns would fail under load.
+
+Full write-up: [`docs/benchmarks/2026-04-18-minions-vs-openclaw-production.md`](docs/benchmarks/2026-04-18-minions-vs-openclaw-production.md).
+
+### Lab numbers (controlled environment)
+
+Same LLM (`claude-haiku-4-5`), same prompt, same laptop. Delta is what the queue saves you.
 
 | Axis | Minions | OpenClaw `--local` | Delta |
 |---|---|---|---|
@@ -184,11 +201,16 @@ Same LLM (`claude-haiku-4-5`), same prompt, same laptop. The delta is what the q
 | **Fan-out** (3 runs × 10 children in parallel, mean wall time) | 1090ms, 30/30 complete | 22598ms, 17/30 complete (43% failure) | **~21× faster, no failure wall** |
 | **Memory** (10 subagents in flight) | 86 MB RSS (1 process) | 814 MB summed (10 processes) | **~400× less** |
 
-Crash and your work doesn't vanish. Dispatch is 10× faster because the worker stays warm. Fan-out past 10-wide doesn't hit a reliability cliff. Memory stops being the bottleneck.
+Full methodology: [`docs/benchmarks/2026-04-18-minions-vs-openclaw-subagents.md`](docs/benchmarks/2026-04-18-minions-vs-openclaw-subagents.md).
 
-Full methodology, caveats, and reproduction steps: [`docs/benchmarks/2026-04-18-minions-vs-openclaw-subagents.md`](docs/benchmarks/2026-04-18-minions-vs-openclaw-subagents.md).
+### The routing rule
 
-**Production data point.** On Wintermute (Render container, Supabase Postgres, 45K-page brain), a Minions pipeline pulled and ingested one month of tweets end-to-end in **753ms for $0.00**. An OpenClaw `sessions_spawn` for the same task hit the **10-second gateway timeout** and never produced output. Full write-up: [`docs/benchmarks/2026-04-18-minions-vs-openclaw-production.md`](docs/benchmarks/2026-04-18-minions-vs-openclaw-production.md).
+Minions isn't "better subagents." It's a different tool for a different class of work.
+
+> **Deterministic** (same input → same steps → same output) → **Minions**
+> **Judgment** (input requires assessment or decision) → **Sub-agents**
+
+Pull tweets, parse JSON, write a brain page, run a sync — deterministic. Minions. Triage an email inbox, assess meeting priority, decide if a cold email is worth replying to — judgment. Sub-agents. `minion_mode: pain_triggered` (the default) uses that rule automatically.
 
 ### How each pain gets fixed
 
@@ -214,17 +236,17 @@ gbrain jobs work --concurrency 4         # start a worker daemon (Postgres only)
 
 Read `skills/minion-orchestrator/SKILL.md` for the full orchestration patterns (parent-child DAGs, fan-in collection, steering via inbox).
 
-### v0.11.0 migration didn't fire on your upgrade?
+### Health check and self-heal
 
-If you upgraded to v0.11.0 and Minions is partially set up (no `~/.gbrain/preferences.json`, autopilot still inline, cron jobs still on `agentTurn`), you hit the mega-bug where `runPostUpgrade` printed the feature pitch but never executed the migration. Two repair paths:
+Minions is canonical as of v0.11.1 — every `gbrain upgrade` runs the migration automatically (schema → smoke → prefs → host rewrites → env-aware autopilot install). If you ever want to verify manually or wire a cron into your morning briefing:
 
-- **v0.11.1 binary installed**: `gbrain upgrade && gbrain apply-migrations --yes`.
-- **Stuck on v0.11.0 binary**: paste this stopgap, then upgrade + apply-migrations:
-  ```bash
-  curl -fsSL https://raw.githubusercontent.com/garrytan/gbrain/v0.11.1/scripts/fix-v0.11.0.sh | bash
-  ```
+```bash
+gbrain doctor                    # half-migrated state? prints loud banner + exits non-zero
+gbrain skillpack-check --quiet    # exit 0/1/2 for pipeline gating
+gbrain skillpack-check | jq       # full JSON: {healthy, summary, actions[], doctor, migrations}
+```
 
-Full troubleshooting: [`docs/guides/minions-fix.md`](docs/guides/minions-fix.md).
+If anything's off, `actions[]` tells you the exact command to run. For deeper troubleshooting: [`docs/guides/minions-fix.md`](docs/guides/minions-fix.md).
 
 ## Skillify + check-resolvable: user-controllable auto-skill-creation
 
