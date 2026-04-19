@@ -2,8 +2,8 @@ import postgres from 'postgres';
 import type { BrainEngine, LinkBatchInput, TimelineBatchInput, ReservedConnection } from './engine.ts';
 import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
-import { SCHEMA_SQL } from './schema-embedded.ts';
 import { verifySchema } from './schema-verify.ts';
+import { renderSchema } from './schema-render.ts';
 import type {
   Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput, StaleChunkRow,
@@ -114,12 +114,12 @@ export class PostgresEngine implements BrainEngine {
       // pre-v0.18 brain hits `CREATE INDEX idx_pages_source_id ON pages(source_id)`
       // (issues #366/#375/#378/#396), or a pre-v0.13 brain hits
       // `CREATE INDEX idx_links_source ON links(link_source)` (#266/#357), and
-      // SCHEMA_SQL crashes before runMigrations gets a chance to apply the
+      // schema rendering crashes before runMigrations gets a chance to apply the
       // missing column. Bootstrap is structurally idempotent and a no-op on
       // fresh installs and modern brains.
       await this.applyForwardReferenceBootstrap();
 
-      await conn.unsafe(SCHEMA_SQL);
+      await conn.unsafe(renderSchema());
 
       // Run any pending migrations automatically
       const { applied } = await runMigrations(this);

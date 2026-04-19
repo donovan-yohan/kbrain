@@ -29,6 +29,24 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+
+  // Embedding provider (OpenAI-compatible)
+  embedding_base_url?: string;
+  embedding_model?: string;
+  embedding_dimensions?: number;
+
+  // Chat provider for query expansion
+  // 'anthropic' (default) uses Anthropic SDK; 'openai-compat' uses OpenAI SDK with any compatible server
+  expansion_provider?: 'anthropic' | 'openai-compat';
+  expansion_base_url?: string;
+  expansion_model?: string;
+  expansion_api_key?: string;
+
+  // Audio transcription (OpenAI-compatible Whisper endpoint)
+  transcription_base_url?: string;
+  transcription_model?: string;
+  transcription_api_key?: string;
+
   /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
@@ -49,23 +67,40 @@ export function loadConfig(): GBrainConfig | null {
     fileConfig = JSON.parse(raw) as GBrainConfig;
   } catch { /* no config file */ }
 
-  // Try env vars
   const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
 
   if (!fileConfig && !dbUrl) return null;
 
-  // Infer engine type if not explicitly set
   const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
     || (fileConfig?.database_path ? 'pglite' : 'postgres');
 
-  // Merge: env vars override config file
-  const merged = {
+  // Env vars override config file
+  const envOverrides: Partial<GBrainConfig> = {};
+  if (dbUrl) envOverrides.database_url = dbUrl;
+  if (process.env.OPENAI_API_KEY) envOverrides.openai_api_key = process.env.OPENAI_API_KEY;
+  if (process.env.ANTHROPIC_API_KEY) envOverrides.anthropic_api_key = process.env.ANTHROPIC_API_KEY;
+  if (process.env.OPENAI_BASE_URL) envOverrides.embedding_base_url = process.env.OPENAI_BASE_URL;
+  if (process.env.EMBEDDING_BASE_URL) envOverrides.embedding_base_url = process.env.EMBEDDING_BASE_URL;
+  if (process.env.EMBEDDING_MODEL) envOverrides.embedding_model = process.env.EMBEDDING_MODEL;
+  if (process.env.EMBEDDING_DIMENSIONS) {
+    const n = parseInt(process.env.EMBEDDING_DIMENSIONS, 10);
+    if (!isNaN(n) && n > 0) envOverrides.embedding_dimensions = n;
+  }
+  if (process.env.EXPANSION_PROVIDER === 'anthropic' || process.env.EXPANSION_PROVIDER === 'openai-compat') {
+    envOverrides.expansion_provider = process.env.EXPANSION_PROVIDER;
+  }
+  if (process.env.EXPANSION_BASE_URL) envOverrides.expansion_base_url = process.env.EXPANSION_BASE_URL;
+  if (process.env.EXPANSION_MODEL) envOverrides.expansion_model = process.env.EXPANSION_MODEL;
+  if (process.env.EXPANSION_API_KEY) envOverrides.expansion_api_key = process.env.EXPANSION_API_KEY;
+  if (process.env.TRANSCRIPTION_BASE_URL) envOverrides.transcription_base_url = process.env.TRANSCRIPTION_BASE_URL;
+  if (process.env.TRANSCRIPTION_MODEL) envOverrides.transcription_model = process.env.TRANSCRIPTION_MODEL;
+  if (process.env.TRANSCRIPTION_API_KEY) envOverrides.transcription_api_key = process.env.TRANSCRIPTION_API_KEY;
+
+  return {
     ...fileConfig,
     engine: inferredEngine,
-    ...(dbUrl ? { database_url: dbUrl } : {}),
-    ...(process.env.OPENAI_API_KEY ? { openai_api_key: process.env.OPENAI_API_KEY } : {}),
-  };
-  return merged as GBrainConfig;
+    ...envOverrides,
+  } as GBrainConfig;
 }
 
 export function saveConfig(config: GBrainConfig): void {
@@ -116,4 +151,20 @@ export function getDbUrlSource(): DbUrlSource {
     // Config file exists but is unreadable/malformed — treat as null source.
     return null;
   }
+}
+
+// Embedding config resolution with defaults. Returns values the embedding client should use.
+export function resolveEmbeddingConfig(): {
+  baseURL: string | undefined;
+  apiKey: string;
+  model: string;
+  dimensions: number;
+} {
+  const config = loadConfig();
+  return {
+    baseURL: config?.embedding_base_url,
+    apiKey: config?.openai_api_key || process.env.OPENAI_API_KEY || 'sk-local',
+    model: config?.embedding_model || 'text-embedding-3-large',
+    dimensions: config?.embedding_dimensions || 1536,
+  };
 }
