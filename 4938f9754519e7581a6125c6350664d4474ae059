@@ -1,0 +1,45 @@
+src/commands/check-update.ts
+  68b95bf4b8243dc3 38,45,63
+src/commands/upgrade.ts
+  68b95bf4b8243dc3 33,51
+README.md
+  68b95bf4b8243dc3 1,3,5-7,11,19,21-22,28,31,36,53,84,272,274,276-278,280,448
+docs/guides/upgrades-auto-update.md
+  68b95bf4b8243dc3 137
+INSTALL_FOR_AGENTS.md
+  68b95bf4b8243dc3 9
+skills/setup/SKILL.md
+  68b95bf4b8243dc3 31,90,307
+docs/GBRAIN_SKILLPACK.md
+  68b95bf4b8243dc3 2
+docs/guides/minions-fix.md
+  68b95bf4b8243dc3 89
+scripts/fix-v0.11.0.sh
+  68b95bf4b8243dc3 6
+docs/GBRAIN_RECOMMENDED_SCHEMA.md
+  68b95bf4b8243dc3 2
+src/commands/init.ts
+  68b95bf4b8243dc3 370
+CONTRIBUTING.md
+  68b95bf4b8243dc3 6
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "4938f9754519e7581a6125c6350664d4474ae059",
+  "prompts": {
+    "68b95bf4b8243dc3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55175776-a652-4136-9a24-e6fd14e729e5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 1007,
+      "total_deletions": 183,
+      "accepted_lines": 991,
+      "overriden_lines": 0
+    }
+  }
+}
