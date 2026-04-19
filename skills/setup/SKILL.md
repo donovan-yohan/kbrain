@@ -28,7 +28,7 @@ Set up GBrain from scratch. Target: working brain in under 5 minutes.
 ## Install (if not already installed)
 
 ```bash
-bun add github:garrytan/gbrain
+bun add github:donovan-yohan/kbrain
 ```
 
 ## How GBrain connects
@@ -87,7 +87,7 @@ Guide the user through creating a Supabase project:
    ```
 6. Verify: `gbrain doctor --json`
 
-**OpenClaw/Hermes agent instructions:** Store the Supabase access token in your persistent
+**Hermes/OpenClaw agent instructions:** Store the Supabase access token in your persistent
 env as `SUPABASE_ACCESS_TOKEN`. gbrain doesn't store it, you need it for future
 `gbrain doctor` runs. Generate at: https://supabase.com/dashboard/account/tokens
 
@@ -304,7 +304,7 @@ output. It checks connection, pgvector, RLS, schema version, and embeddings.
 ## Phase G: Auto-Update Check (if not already configured)
 
 If the user's install did NOT include setting up auto-update checks (e.g., they
-used the manual install path or an older version of the OpenClaw/Hermes paste), offer it:
+used the manual install path or an older version of the Hermes/OpenClaw paste), offer it:
 
 > "Would you like daily GBrain update checks? I'll let you know when there's a
 > new version worth upgrading to — including new skills and schema recommendations.
