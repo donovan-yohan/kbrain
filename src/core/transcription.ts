@@ -101,17 +101,17 @@ export async function transcribe(
 function detectProvider(): 'groq' | 'openai' | 'custom' {
   const cfg = loadConfig();
   if (cfg?.transcription_base_url || process.env.TRANSCRIPTION_BASE_URL) return 'custom';
-  if (process.env.GROQ_API_KEY) return 'groq';
-  if (process.env.OPENAI_API_KEY) return 'openai';
+  if (cfg?.groq_api_key || process.env.GROQ_API_KEY) return 'groq';
+  if (cfg?.openai_api_key || process.env.OPENAI_API_KEY) return 'openai';
   return 'groq'; // default, will fail with clear error if no key
 }
 
 function getApiKey(provider: string): string | undefined {
   const cfg = loadConfig();
   switch (provider) {
-    case 'groq': return process.env.GROQ_API_KEY;
-    case 'openai': return process.env.OPENAI_API_KEY;
-    case 'deepgram': return process.env.DEEPGRAM_API_KEY;
+    case 'groq': return cfg?.groq_api_key || process.env.GROQ_API_KEY;
+    case 'openai': return cfg?.openai_api_key || process.env.OPENAI_API_KEY;
+    case 'deepgram': return cfg?.deepgram_api_key || process.env.DEEPGRAM_API_KEY;
     case 'custom':
       return cfg?.transcription_api_key || process.env.TRANSCRIPTION_API_KEY || 'sk-local';
     default: return undefined;

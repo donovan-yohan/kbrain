@@ -26,21 +26,29 @@ const BATCH_SIZE = 100;
 let client: OpenAI | null = null;
 let cachedModel: string | null = null;
 let cachedDimensions: number | null = null;
+let cachedBaseURL: string | undefined;
+let cachedIsCloudOpenAI = true;
 
 function getClient(): { client: OpenAI; model: string; dimensions: number; isCloudOpenAI: boolean } {
-  if (!client || cachedModel === null || cachedDimensions === null) {
-    const cfg = resolveEmbeddingConfig();
+  const cfg = resolveEmbeddingConfig();
+  // Recreate the client if the baseURL changed so the request shape (dimensions
+  // param is cloud-only) and endpoint stay consistent with the cached flags.
+  if (!client || cfg.baseURL !== cachedBaseURL) {
     client = new OpenAI({
       apiKey: cfg.apiKey,
       ...(cfg.baseURL ? { baseURL: cfg.baseURL } : {}),
     });
+    cachedBaseURL = cfg.baseURL;
+    cachedIsCloudOpenAI = !cfg.baseURL;
     cachedModel = cfg.model;
     cachedDimensions = cfg.dimensions;
   }
-  // Only cloud OpenAI supports the `dimensions` param (Matryoshka). Local servers
-  // emit their native dimension and would error on the extra field.
-  const isCloudOpenAI = !resolveEmbeddingConfig().baseURL;
-  return { client, model: cachedModel, dimensions: cachedDimensions, isCloudOpenAI };
+  return {
+    client,
+    model: cachedModel!,
+    dimensions: cachedDimensions!,
+    isCloudOpenAI: cachedIsCloudOpenAI,
+  };
 }
 
 export async function embed(text: string): Promise<Float32Array> {
@@ -153,4 +161,6 @@ export function resetEmbeddingClient(): void {
   client = null;
   cachedModel = null;
   cachedDimensions = null;
+  cachedBaseURL = undefined;
+  cachedIsCloudOpenAI = true;
 }
