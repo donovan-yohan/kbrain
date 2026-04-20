@@ -367,7 +367,7 @@ export function reportModStatus(): void {
   console.log(`GStack: ${gstack.found ? `found (${gstack.host})` : 'not found'}`);
   if (!gstack.found) {
     console.log('  Install GStack for coding skills:');
-    console.log('  git clone https://github.com/garrytan/gstack.git ~/.claude/skills/gstack');
+    console.log('  git clone https://github.com/donovan-yohan/gstack-adfree.git ~/.claude/skills/gstack');
     console.log('  cd ~/.claude/skills/gstack && ./setup');
   }
   console.log('Resolver: skills/RESOLVER.md');

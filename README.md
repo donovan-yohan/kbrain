@@ -1,12 +1,12 @@
-# GBrain
+# kbrain
 
-Your AI agent is smart but forgetful. GBrain gives it a brain.
+Your AI agent is smart but forgetful. kbrain gives it a brain.
 
-Built by the President and CEO of Y Combinator to run his actual AI agents. The production brain powering his OpenClaw and Hermes deployments: **17,888 pages, 4,383 people, 723 companies**, 21 cron jobs running autonomously, built in 12 days. The agent ingests meetings, emails, tweets, voice calls, and original ideas while you sleep. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight. You wake up and the brain is smarter than when you went to bed.
+Fork of upstream gbrain with YC and founder-voice framing stripped. Primary target: **Hermes Agent**. OpenClaw is supported but secondary.
 
 The brain wires itself. Every page write extracts entity references and creates typed links (`attended`, `works_at`, `invested_in`, `founded`, `advises`) with zero LLM calls. Hybrid search. Self-wiring knowledge graph. Structured timeline. Backlink-boosted ranking. Ask "who works at Acme AI?" or "what did Bob invest in this quarter?" and get answers vector search alone can't reach. Benchmarked end-to-end: **Recall@5 jumps from 83% to 95%, Precision@5 from 39% to 45%, +30 more correct answers in the agent's top-5 reads** on a 240-page Opus-generated rich-prose corpus. Graph-only F1: **86.6% vs grep's 57.8%** (+28.8 pts). [Full report](docs/benchmarks/2026-04-18-brainbench-v1.md).
 
-GBrain is those patterns, generalized. 26 skills. Install in 30 minutes. Your agent does the work. As Garry's personal agent gets smarter, so does yours.
+26 skills. Install in 30 minutes. Your agent does the work.
 
 > **~30 minutes to a fully working brain.** Database ready in 2 seconds (PGLite, no server). You just answer questions about API keys.
 
@@ -14,24 +14,24 @@ GBrain is those patterns, generalized. 26 skills. Install in 30 minutes. Your ag
 
 ### On an agent platform (recommended)
 
-GBrain is designed to be installed and operated by an AI agent. If you don't have one running yet:
+kbrain is designed to be installed and operated by an AI agent. If you don't have one running yet:
 
-- **[OpenClaw](https://openclaw.ai)** ... Deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM)
-- **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** ... Deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click)
+- **[Hermes Agent](https://github.com/NousResearch/hermes-agent)** — Deploy on [Railway](https://github.com/praveen-ks-2001/hermes-agent-template) (one click). Primary target for this fork.
+- **[OpenClaw](https://openclaw.ai)** — Deploy [AlphaClaw on Render](https://render.com/deploy?repo=https://github.com/chrysb/alphaclaw) (one click, 8GB+ RAM). Supported but secondary.
 
 Paste this into your agent:
 
 ```
 Retrieve and follow the instructions at:
-https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
+https://raw.githubusercontent.com/donovan-yohan/kbrain/master/INSTALL_FOR_AGENTS.md
 ```
 
-That's it. The agent clones the repo, installs GBrain, sets up the brain, loads 26 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
+That's it. The agent clones the repo, installs kbrain, sets up the brain, loads 26 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
 
 ### Standalone CLI (no agent)
 
 ```bash
-git clone https://github.com/garrytan/gbrain.git && cd gbrain && bun install && bun link
+git clone https://github.com/donovan-yohan/kbrain.git && cd kbrain && bun install && bun link
 gbrain init                     # local brain, ready in 2 seconds
 gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
@@ -48,7 +48,7 @@ gbrain query "what themes show up across my notes?"
    Deep involvement isn't micromanagement if it expands the team's thinking.
 
 3. concepts/build-something-people-want (score: 0.81)
-   The YC motto. Connected to 12 other brain pages.
+   Connected to 12 other brain pages.
 ```
 
 ### MCP server (Claude Code, Cursor, Windsurf)
