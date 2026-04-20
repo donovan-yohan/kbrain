@@ -1,5 +1,41 @@
 # CLAUDE.md
 
+kbrain is a fork of https://github.com/garrytan/gbrain maintained at
+https://github.com/donovan-yohan/kbrain. Primary target host: **Hermes Agent**.
+OpenClaw support is preserved but secondary.
+
+## Upstream sync
+
+Before starting any new work, pull upstream updates:
+
+```bash
+git remote add upstream https://github.com/garrytan/gbrain.git 2>/dev/null || true
+git fetch upstream master
+git merge upstream/master --no-edit
+```
+
+**Conflict resolution strategy:**
+- **Install/upgrade URL files** (README, INSTALL_FOR_AGENTS.md, CONTRIBUTING.md,
+  `src/commands/upgrade.ts`, `src/commands/check-update.ts`, `src/commands/init.ts`,
+  `scripts/fix-v0.11.0.sh`, `docs/guides/upgrades-auto-update.md`,
+  `docs/guides/minions-fix.md`, `docs/GBRAIN_SKILLPACK.md`,
+  `docs/GBRAIN_RECOMMENDED_SCHEMA.md`, `skills/setup/SKILL.md`): always keep our
+  `donovan-yohan/kbrain` URLs. Upstream won't change theirs, so these merge cleanly
+  most of the time.
+- **README.md / TODOS.md YC framing:** accept upstream's version, then re-apply
+  ad-free edits (strip "President and CEO of Y Combinator" opener, reorder
+  Hermes-first, drop promotional asides).
+- **CLAUDE.md guardrails:** never re-adopt upstream's "never auto-merge PRs that
+  remove YC references" rule. This fork removes that.
+- After any merge involving docs or skills, verify URLs still point to
+  `donovan-yohan/kbrain`:
+  ```bash
+  grep -rn "garrytan/gbrain" src/commands/ INSTALL_FOR_AGENTS.md CONTRIBUTING.md README.md scripts/fix-v0.11.0.sh docs/guides/upgrades-auto-update.md docs/guides/minions-fix.md docs/GBRAIN_SKILLPACK.md docs/GBRAIN_RECOMMENDED_SCHEMA.md skills/setup/SKILL.md
+  ```
+  Expected: no matches.
+
+## Overview
+
 GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable
 engines: PGLite (embedded Postgres via WASM, zero-config default) or Postgres + pgvector
 + hybrid search in a managed Supabase instance. `gbrain init` defaults to PGLite;
@@ -279,10 +315,10 @@ A ship without updated docs is an incomplete ship. Period.
 
 ## CHANGELOG voice + release-summary format
 
-Every version entry in `CHANGELOG.md` MUST start with a release-summary section in
-the GStack/Garry voice — one viewport's worth of prose + tables that lands like a
-verdict, not marketing. The itemized changelog (subsections, bullets, files) goes
-BELOW that summary, separated by a `### Itemized changes` header.
+Every version entry in `CHANGELOG.md` starts with a concise release-summary section
+— one viewport's worth of prose + tables describing what shipped and why it matters
+to users. The itemized changelog (subsections, bullets, files) goes BELOW that
+summary, separated by a `### Itemized changes` header.
 
 The release-summary section gets read by humans, by the auto-update agent, and by
 anyone deciding whether to upgrade. The itemized list is for agents that need to
@@ -458,11 +494,10 @@ Never merge external PRs directly into master. Instead, use the "fix wave" workf
 6. **Ship as one PR** — single PR to master with all attributions preserved via
    `Co-Authored-By:` trailers. Include a summary of what merged and what closed.
 
-**Community PR guardrails:**
-- Always AskUserQuestion before accepting commits that touch voice, tone, or
-  promotional material (README intro, CHANGELOG voice, skill templates).
-- Never auto-merge PRs that remove YC references or "neutralize" the founder perspective.
+**Fork-specific PR notes:**
 - Preserve contributor attribution in commit messages.
+- Upstream framing (YC references, founder-voice promo) is stripped as part of
+  this fork's purpose. PRs that restore that framing should be declined.
 
 ## Skill routing
 
