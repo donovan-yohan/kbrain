@@ -29,6 +29,8 @@ export interface GBrainConfig {
   database_path?: string;
   openai_api_key?: string;
   anthropic_api_key?: string;
+  groq_api_key?: string;
+  deepgram_api_key?: string;
 
   // Embedding provider (OpenAI-compatible)
   embedding_base_url?: string;
@@ -79,6 +81,8 @@ export function loadConfig(): GBrainConfig | null {
   if (dbUrl) envOverrides.database_url = dbUrl;
   if (process.env.OPENAI_API_KEY) envOverrides.openai_api_key = process.env.OPENAI_API_KEY;
   if (process.env.ANTHROPIC_API_KEY) envOverrides.anthropic_api_key = process.env.ANTHROPIC_API_KEY;
+  if (process.env.GROQ_API_KEY) envOverrides.groq_api_key = process.env.GROQ_API_KEY;
+  if (process.env.DEEPGRAM_API_KEY) envOverrides.deepgram_api_key = process.env.DEEPGRAM_API_KEY;
   if (process.env.OPENAI_BASE_URL) envOverrides.embedding_base_url = process.env.OPENAI_BASE_URL;
   if (process.env.EMBEDDING_BASE_URL) envOverrides.embedding_base_url = process.env.EMBEDDING_BASE_URL;
   if (process.env.EMBEDDING_MODEL) envOverrides.embedding_model = process.env.EMBEDDING_MODEL;
@@ -154,6 +158,13 @@ export function getDbUrlSource(): DbUrlSource {
 }
 
 // Embedding config resolution with defaults. Returns values the embedding client should use.
+//
+// Reads env vars directly (not only through loadConfig) so that first-run
+// workflows work correctly — gbrain init calls initSchema() before any config
+// file exists, and loadConfig() returns null when there's no config file and
+// no DATABASE_URL. Without this direct read, EMBEDDING_DIMENSIONS would be
+// ignored on first init and the pgvector column would be created with the
+// default 1536 dimensions even when the user requested something else.
 export function resolveEmbeddingConfig(): {
   baseURL: string | undefined;
   apiKey: string;
@@ -161,10 +172,17 @@ export function resolveEmbeddingConfig(): {
   dimensions: number;
 } {
   const config = loadConfig();
+  const envBaseURL = process.env.EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL;
+  const envModel = process.env.EMBEDDING_MODEL;
+  let envDim: number | undefined;
+  if (process.env.EMBEDDING_DIMENSIONS) {
+    const n = parseInt(process.env.EMBEDDING_DIMENSIONS, 10);
+    if (!isNaN(n) && n > 0) envDim = n;
+  }
   return {
-    baseURL: config?.embedding_base_url,
+    baseURL: config?.embedding_base_url || envBaseURL,
     apiKey: config?.openai_api_key || process.env.OPENAI_API_KEY || 'sk-local',
-    model: config?.embedding_model || 'text-embedding-3-large',
-    dimensions: config?.embedding_dimensions || 1536,
+    model: config?.embedding_model || envModel || 'text-embedding-3-large',
+    dimensions: config?.embedding_dimensions || envDim || 1536,
   };
 }

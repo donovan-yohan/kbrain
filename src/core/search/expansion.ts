@@ -34,7 +34,11 @@ let anthropicClient: Anthropic | null = null;
 let openaiClient: OpenAI | null = null;
 
 function getAnthropicClient(): Anthropic {
-  if (!anthropicClient) anthropicClient = new Anthropic();
+  if (!anthropicClient) {
+    const cfg = loadConfig();
+    const apiKey = cfg?.anthropic_api_key || process.env.ANTHROPIC_API_KEY;
+    anthropicClient = new Anthropic(apiKey ? { apiKey } : {});
+  }
   return anthropicClient;
 }
 
@@ -57,8 +61,11 @@ function resolveProvider(): 'anthropic' | 'openai-compat' {
   if (cfg?.expansion_provider) return cfg.expansion_provider;
   if (process.env.EXPANSION_PROVIDER === 'anthropic') return 'anthropic';
   if (process.env.EXPANSION_PROVIDER === 'openai-compat') return 'openai-compat';
-  // Default to anthropic only if ANTHROPIC_API_KEY is set AND no OpenAI-compat config
-  if (process.env.ANTHROPIC_API_KEY) return 'anthropic';
+  // Default to anthropic when an Anthropic key is available in env OR config
+  // file — without the config check, a user with anthropic_api_key in
+  // ~/.gbrain/config.json + EXPANSION_BASE_URL set would incorrectly be routed
+  // to the openai-compat branch and bypass their Anthropic setup.
+  if (cfg?.anthropic_api_key || process.env.ANTHROPIC_API_KEY) return 'anthropic';
   // Otherwise fall back to openai-compat if an expansion base URL is set
   if (cfg?.expansion_base_url || process.env.EXPANSION_BASE_URL) return 'openai-compat';
   return 'anthropic';

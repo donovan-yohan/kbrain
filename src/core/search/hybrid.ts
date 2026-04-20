@@ -86,12 +86,17 @@ export async function hybridSearch(
   // Run keyword search (always available, no API key needed)
   const keywordResults = await engine.searchKeyword(query, searchOpts);
 
-  // Skip vector search if no embedding provider is configured (no OpenAI key AND no local base URL)
+  // Skip vector search if no embedding provider is configured. Check config
+  // file in addition to env so that openai_api_key / embedding_base_url stored
+  // in ~/.gbrain/config.json light up the vector path without also needing env
+  // exports.
+  const cfg = loadConfig();
   const hasEmbeddingProvider = !!(
     process.env.OPENAI_API_KEY
     || process.env.EMBEDDING_BASE_URL
     || process.env.OPENAI_BASE_URL
-    || loadConfig()?.embedding_base_url
+    || cfg?.openai_api_key
+    || cfg?.embedding_base_url
   );
   if (!hasEmbeddingProvider) {
     // Apply backlink boost in keyword-only path too. One getBacklinkCounts query
