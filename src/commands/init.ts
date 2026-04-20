@@ -10,6 +10,7 @@ import { saveConfig, loadConfig, toEngineConfig, type GBrainConfig } from '../co
 import { createEngine } from '../core/engine-factory.ts';
 import { resolveProfileId } from '../core/profiles/catalog.ts';
 import type { ProfileId } from '../core/profiles/types.ts';
+import { resolvePolicyId } from '../core/policy.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -119,6 +120,7 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
       engine: 'pglite',
       database_path: dbPath,
       profile_id: opts.profileId,
+      policy_id: resolvePolicyId(opts.profileId),
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
     };
     saveConfig(config);
@@ -203,6 +205,7 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
       engine: 'postgres',
       database_url: databaseUrl,
       profile_id: opts.profileId,
+      policy_id: resolvePolicyId(opts.profileId),
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
     };
     saveConfig(config);

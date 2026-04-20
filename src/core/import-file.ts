@@ -6,6 +6,8 @@ import { chunkText } from './chunkers/recursive.ts';
 import { embedBatch } from './embedding.ts';
 import { slugifyPath } from './sync.ts';
 import type { ChunkInput, PageType } from './types.ts';
+import { validateFrontmatter } from './frontmatter-schema.ts';
+import { loadConfig } from './config.ts';
 
 /**
  * The parsed page metadata returned by importFromContent. Callers (specifically
@@ -30,7 +32,7 @@ export interface ImportResult {
    * Parsed page content. Present for status='imported' AND status='skipped'
    * (skip happens when content is identical to existing page; auto-link still
    * needs to run for reconciliation in case links table drifted from page text).
-   * Absent only on status='error' (early payload-size rejection).
+   * Absent on status='error' (payload-size rejection or frontmatter validation failure).
    */
   parsedPage?: ParsedPage;
 }
@@ -68,7 +70,21 @@ export async function importFromContent(
     };
   }
 
-  const parsed = parseMarkdown(content, slug + '.md');
+  const profileId = loadConfig()?.profile_id;
+  const parsed = parseMarkdown(content, slug + '.md', { profileId });
+  const frontmatterValidation = validateFrontmatter(
+    parsed.type,
+    parsed.frontmatter,
+    { profileId },
+  );
+  if (!frontmatterValidation.valid) {
+    return {
+      slug,
+      status: 'error',
+      chunks: 0,
+      error: frontmatterValidation.errors.join(' '),
+    };
+  }
 
   // Hash includes ALL fields for idempotency (not just compiled_truth + timeline)
   const hash = createHash('sha256')

@@ -131,6 +131,51 @@ Legit content.
     expect(result.slug).toBe('people/alice-smith');
   });
 
+  test('blocks canonical private-finance imports that violate required frontmatter', async () => {
+    process.env.GBRAIN_PROFILE_ID = 'private-finance';
+
+    const filePath = join(TMP, 'tx.md');
+    writeFileSync(filePath, `---
+type: transaction
+title: Payroll
+amount: 4200
+---
+
+Payroll hit the account.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'transactions/payroll.md', { noEmbed: true });
+
+    expect(result.status).toBe('error');
+    expect(result.error).toContain('date');
+    expect((engine as any)._calls.length).toBe(0);
+
+    delete process.env.GBRAIN_PROFILE_ID;
+  });
+
+  test('allows draft private-finance imports with incomplete required frontmatter', async () => {
+    process.env.GBRAIN_PROFILE_ID = 'private-finance';
+
+    const filePath = join(TMP, 'draft-tx.md');
+    writeFileSync(filePath, `---
+type: transaction
+title: Draft Payroll
+draft: true
+amount: 4200
+---
+
+Draft payroll record.
+`);
+
+    const engine = mockEngine();
+    const result = await importFile(engine, filePath, 'transactions/draft-payroll.md', { noEmbed: true });
+
+    expect(result.status).toBe('imported');
+
+    delete process.env.GBRAIN_PROFILE_ID;
+  });
+
   test('uses path-derived slug when no frontmatter slug is set', async () => {
     // The common case: no frontmatter.slug, so the path determines the slug.
     const filePath = join(TMP, 'concept-path.md');
