@@ -14,6 +14,7 @@ import { hybridSearch } from './search/hybrid.ts';
 import { expandQuery } from './search/expansion.ts';
 import { dedupResults } from './search/dedup.ts';
 import { extractPageLinks, isAutoLinkEnabled } from './link-extraction.ts';
+import { resolveEmbeddingConfig } from './config.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -230,15 +231,14 @@ const put_page: Operation = {
   handler: async (ctx, p) => {
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
     const slug = p.slug as string;
-    // Skip embedding when no embedding provider is configured. Checks for either
-    // a cloud OpenAI key or a local/custom base URL. Without either, the client
-    // would attempt 5 retries with exponential backoff (up to ~2 minutes total)
-    // before giving up. Detect early.
-    const noEmbed = !(
-      process.env.OPENAI_API_KEY
-      || process.env.EMBEDDING_BASE_URL
-      || process.env.OPENAI_BASE_URL
-    );
+    // Skip embedding when no embedding provider is configured. Checks config
+    // file + env so that keys / base URLs stored in ~/.gbrain/config.json work
+    // without requiring the user to also export env vars. Without either a real
+    // key or a local base URL, the client would attempt 5 retries with
+    // exponential backoff (up to ~2 minutes total) before giving up.
+    const embedCfg = resolveEmbeddingConfig();
+    const hasRealApiKey = embedCfg.apiKey !== 'sk-local';
+    const noEmbed = !(hasRealApiKey || embedCfg.baseURL);
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own

@@ -22,7 +22,19 @@ function substitute(sql: string, opts: { dimensions?: number; model?: string }):
   const cfg = resolveEmbeddingConfig();
   const dim = opts.dimensions ?? cfg.dimensions;
   const model = opts.model ?? cfg.model;
+
+  if (!Number.isInteger(dim) || dim <= 0 || dim > 16000) {
+    throw new Error(
+      `Invalid embedding dimensions: ${dim}. Must be a positive integer (pgvector caps at 16000).`
+    );
+  }
+  // SQL-escape the model value since it's substituted inside single-quoted SQL
+  // DEFAULT clauses. Without escaping, a model name containing a single quote
+  // would break schema init or become a SQL-injection vector when conn.unsafe()
+  // executes the rendered DDL.
+  const escapedModel = model.replace(/'/g, "''");
+
   return sql
     .replace(/\{\{EMBEDDING_DIM\}\}/g, String(dim))
-    .replace(/\{\{EMBEDDING_MODEL\}\}/g, model);
+    .replace(/\{\{EMBEDDING_MODEL\}\}/g, escapedModel);
 }
