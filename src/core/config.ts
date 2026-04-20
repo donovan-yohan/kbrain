@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync, mkdirSync, chmodSync, existsSync } from 'f
 import { join } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig } from './types.ts';
+import { DEFAULT_PROFILE_ID, resolveProfileId } from './profiles/catalog.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
@@ -27,6 +28,10 @@ export interface GBrainConfig {
   engine: 'postgres' | 'pglite';
   database_url?: string;
   database_path?: string;
+  profile_id?: 'general-assistant' | 'research-wiki' | 'private-finance';
+  policy_id?: string;
+  brain_scope?: 'general' | 'private';
+  brain_routing_strategy?: 'single' | 'dual-hermes-routed';
   openai_api_key?: string;
   anthropic_api_key?: string;
   /**
@@ -98,10 +103,12 @@ export function loadConfig(): GBrainConfig | null {
   if (process.env.TRANSCRIPTION_BASE_URL) envOverrides.transcription_base_url = process.env.TRANSCRIPTION_BASE_URL;
   if (process.env.TRANSCRIPTION_MODEL) envOverrides.transcription_model = process.env.TRANSCRIPTION_MODEL;
   if (process.env.TRANSCRIPTION_API_KEY) envOverrides.transcription_api_key = process.env.TRANSCRIPTION_API_KEY;
+  if (process.env.GBRAIN_PROFILE_ID) envOverrides.profile_id = resolveProfileId(process.env.GBRAIN_PROFILE_ID);
 
   return {
     ...fileConfig,
     engine: inferredEngine,
+    profile_id: resolveProfileId(fileConfig?.profile_id || envOverrides.profile_id || DEFAULT_PROFILE_ID),
     ...envOverrides,
   } as GBrainConfig;
 }

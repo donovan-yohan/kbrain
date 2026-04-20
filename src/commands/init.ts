@@ -8,6 +8,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 import { saveConfig, loadConfig, toEngineConfig, type GBrainConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
+import { resolveProfileId } from '../core/profiles/catalog.ts';
 
 export async function runInit(args: string[]) {
   const isSupabase = args.includes('--supabase');
@@ -21,6 +22,8 @@ export async function runInit(args: string[]) {
   const apiKey = keyIndex !== -1 ? args[keyIndex + 1] : null;
   const pathIndex = args.indexOf('--path');
   const customPath = pathIndex !== -1 ? args[pathIndex + 1] : null;
+  const profileIndex = args.indexOf('--profile');
+  const profileId = resolveProfileId(profileIndex !== -1 ? args[profileIndex + 1] : undefined);
 
   // Schema-only path: apply initSchema against the already-configured engine
   // without ever calling saveConfig. Used by apply-migrations, the stopgap
@@ -47,7 +50,7 @@ export async function runInit(args: string[]) {
       }
     }
 
-    return initPGLite({ jsonOutput, apiKey, customPath });
+    return initPGLite({ jsonOutput, apiKey, customPath, profileId });
   }
 
   // Supabase/Postgres mode
@@ -66,7 +69,7 @@ export async function runInit(args: string[]) {
     databaseUrl = await supabaseWizard();
   }
 
-  return initPostgres({ databaseUrl, jsonOutput, apiKey });
+  return initPostgres({ databaseUrl, jsonOutput, apiKey, profileId });
 }
 
 /**
@@ -102,7 +105,7 @@ async function initMigrateOnly(opts: { jsonOutput: boolean }) {
   }
 }
 
-async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null }) {
+async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; customPath: string | null; profileId: 'general-assistant' | 'research-wiki' | 'private-finance' }) {
   const dbPath = opts.customPath || join(homedir(), '.gbrain', 'brain.pglite');
   console.log(`Setting up local brain with PGLite (no server needed)...`);
 
@@ -114,6 +117,7 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
     const config: GBrainConfig = {
       engine: 'pglite',
       database_path: dbPath,
+      profile_id: opts.profileId,
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
     };
     saveConfig(config);
@@ -143,7 +147,7 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
   }
 }
 
-async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null }) {
+async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; apiKey: string | null; profileId: 'general-assistant' | 'research-wiki' | 'private-finance' }) {
   const { databaseUrl } = opts;
 
   // Detect Supabase direct connection URLs and warn about IPv6
@@ -197,6 +201,7 @@ async function initPostgres(opts: { databaseUrl: string; jsonOutput: boolean; ap
     const config: GBrainConfig = {
       engine: 'postgres',
       database_url: databaseUrl,
+      profile_id: opts.profileId,
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
     };
     saveConfig(config);

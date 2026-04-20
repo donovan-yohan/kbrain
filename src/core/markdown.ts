@@ -1,6 +1,8 @@
 import matter from 'gray-matter';
 import type { PageType } from './types.ts';
 import { slugifyPath } from './sync.ts';
+import { loadConfig } from './config.ts';
+import { DEFAULT_PROFILE_ID, inferTypeFromPath } from './profiles/catalog.ts';
 
 export interface ParsedMarkdown {
   frontmatter: Record<string, unknown>;
@@ -10,6 +12,10 @@ export interface ParsedMarkdown {
   type: PageType;
   title: string;
   tags: string[];
+}
+
+export interface ParseMarkdownOptions {
+  profileId?: 'general-assistant' | 'research-wiki' | 'private-finance';
 }
 
 /**
@@ -33,14 +39,16 @@ export interface ParsedMarkdown {
  * heading (backward-compat for existing files). A bare `---` in body text
  * is treated as a markdown horizontal rule, not a timeline separator.
  */
-export function parseMarkdown(content: string, filePath?: string): ParsedMarkdown {
+export function parseMarkdown(content: string, filePath?: string, options: ParseMarkdownOptions = {}): ParsedMarkdown {
   const { data: frontmatter, content: body } = matter(content);
 
   // Split body at first standalone ---
   const { compiled_truth, timeline } = splitBody(body);
 
+  const activeProfileId = options.profileId || loadConfig()?.profile_id || DEFAULT_PROFILE_ID;
+
   // Extract metadata from frontmatter
-  const type = (frontmatter.type as PageType) || inferType(filePath);
+  const type = (frontmatter.type as PageType) || inferTypeFromPath(filePath, activeProfileId);
   const title = (frontmatter.title as string) || inferTitle(filePath);
   const tags = extractTags(frontmatter);
   const slug = (frontmatter.slug as string) || inferSlug(filePath);
@@ -147,29 +155,7 @@ export function serializeMarkdown(
 }
 
 function inferType(filePath?: string): PageType {
-  if (!filePath) return 'concept';
-
-  // Normalize: add leading / for consistent matching.
-  // Wiki subtypes and /writing/ check FIRST — they're stronger signals than
-  // ancestor directories. e.g. `projects/blog/writing/essay.md` is a piece of
-  // writing, not a project page; `tech/wiki/analysis/foo.md` is analysis,
-  // not a hit on the broader `tech/` ancestor.
-  const lower = ('/' + filePath).toLowerCase();
-  if (lower.includes('/writing/')) return 'writing';
-  if (lower.includes('/wiki/analysis/')) return 'analysis';
-  if (lower.includes('/wiki/guides/') || lower.includes('/wiki/guide/')) return 'guide';
-  if (lower.includes('/wiki/hardware/')) return 'hardware';
-  if (lower.includes('/wiki/architecture/')) return 'architecture';
-  if (lower.includes('/wiki/concepts/') || lower.includes('/wiki/concept/')) return 'concept';
-  if (lower.includes('/people/') || lower.includes('/person/')) return 'person';
-  if (lower.includes('/companies/') || lower.includes('/company/')) return 'company';
-  if (lower.includes('/deals/') || lower.includes('/deal/')) return 'deal';
-  if (lower.includes('/yc/')) return 'yc';
-  if (lower.includes('/civic/')) return 'civic';
-  if (lower.includes('/projects/') || lower.includes('/project/')) return 'project';
-  if (lower.includes('/sources/') || lower.includes('/source/')) return 'source';
-  if (lower.includes('/media/')) return 'media';
-  return 'concept';
+  return inferTypeFromPath(filePath, loadConfig()?.profile_id || DEFAULT_PROFILE_ID);
 }
 
 function inferTitle(filePath?: string): string {

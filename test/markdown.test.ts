@@ -77,6 +77,16 @@ Content
     expect(parsed.type).toBe('person');
   });
 
+  test('supports research-wiki profile inference for knowledge artifacts', () => {
+    const parsed = parseMarkdown('', 'papers/transformers.md', { profileId: 'research-wiki' });
+    expect(parsed.type).toBe('paper');
+  });
+
+  test('supports private-finance profile inference for finance artifacts', () => {
+    const parsed = parseMarkdown('', 'transactions/2026-04-15-payroll.md', { profileId: 'private-finance' });
+    expect(parsed.type).toBe('transaction');
+  });
+
   test('infers slug from file path', () => {
     const md = `---
 type: concept
