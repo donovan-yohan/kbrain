@@ -2,7 +2,7 @@
 
 Your AI agent is smart but forgetful. kbrain gives it a brain.
 
-Fork of [garrytan/gbrain](https://github.com/garrytan/gbrain) with YC and founder-voice framing stripped. Primary target: **Hermes Agent**. OpenClaw is supported but secondary.
+Fork of upstream gbrain with YC and founder-voice framing stripped. Primary target: **Hermes Agent**. OpenClaw is supported but secondary.
 
 kbrain is a personal knowledge system. It ingests meetings, emails, tweets, voice calls, and original ideas. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight.
 
@@ -217,6 +217,8 @@ gbrain skillpack-check | jq       # full JSON: {healthy, summary, actions[], doc
 ```
 
 If anything's off, `actions[]` tells you the exact command to run. For deeper troubleshooting: [`docs/guides/minions-fix.md`](docs/guides/minions-fix.md).
+
+Moving gateway crons to Minions (deterministic scripts, zero LLM tokens per fire): [`docs/guides/minions-shell-jobs.md`](docs/guides/minions-shell-jobs.md).
 
 ## Skillify: your skills tree stops being a black box
 
@@ -536,6 +538,8 @@ ADMIN
   gbrain integrations                   Integration recipe dashboard
   gbrain check-backlinks check|fix      Back-link enforcement
   gbrain lint [--fix]                   LLM artifact detection
+  gbrain repair-jsonb [--dry-run]       Repair v0.12.0 double-encoded JSONB (Postgres)
+  gbrain orphans [--json] [--count]     Find pages with zero inbound wikilinks
   gbrain transcribe <audio>             Transcribe audio (Groq Whisper)
   gbrain research init <name>           Scaffold a data-research recipe
   gbrain research list                  Show available recipes

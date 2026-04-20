@@ -18,7 +18,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'apply-migrations', 'skillpack-check']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'apply-migrations', 'skillpack-check', 'resolvers', 'integrity', 'repair-jsonb', 'orphans']);
 
 async function main() {
   const args = process.argv.slice(2);
@@ -277,6 +277,16 @@ async function handleCliOnly(command: string, args: string[]) {
     await runIntegrations(args);
     return;
   }
+  if (command === 'resolvers') {
+    const { runResolvers } = await import('./commands/resolvers.ts');
+    await runResolvers(args);
+    return;
+  }
+  if (command === 'integrity') {
+    const { runIntegrity } = await import('./commands/integrity.ts');
+    await runIntegrity(args);
+    return;
+  }
   if (command === 'publish') {
     const { runPublish } = await import('./commands/publish.ts');
     await runPublish(args);
@@ -304,6 +314,11 @@ async function handleCliOnly(command: string, args: string[]) {
     // `gbrain init --migrate-only` and `gbrain jobs smoke`.
     const { runApplyMigrations } = await import('./commands/apply-migrations.ts');
     await runApplyMigrations(args);
+    return;
+  }
+  if (command === 'repair-jsonb') {
+    const { runRepairJsonbCli } = await import('./commands/repair-jsonb.ts');
+    await runRepairJsonbCli(args);
     return;
   }
   if (command === 'skillpack-check') {
@@ -410,6 +425,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'graph-query': {
         const { runGraphQuery } = await import('./commands/graph-query.ts');
         await runGraphQuery(engine, args);
+        break;
+      }
+      case 'orphans': {
+        const { runOrphans } = await import('./commands/orphans.ts');
+        await runOrphans(engine, args);
         break;
       }
     }
@@ -520,6 +540,7 @@ TOOLS
   publish <page.md> [--password]     Shareable HTML (strips private data, optional AES-256)
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
   lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
+  orphans [--json] [--count]         Find pages with no inbound wikilinks
   report --type <name> --content ... Save timestamped report to brain/reports/
 
 JOBS (Minions)
