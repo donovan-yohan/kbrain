@@ -511,11 +511,20 @@ export async function registerBuiltinHandlers(worker: MinionWorker, engine: Brai
 
   worker.register('embed', async (job) => {
     const { runEmbedCore } = await import('./embed.ts');
+    // Primary Minion progress channel is job.updateProgress (DB-backed,
+    // readable via `gbrain jobs get <id>`). Stderr from the worker daemon
+    // only emits coarse job-start / job-done lines; per-page detail lives
+    // in the DB. Per Codex review #20.
     await runEmbedCore(engine, {
       slug: typeof job.data.slug === 'string' ? job.data.slug : undefined,
       slugs: Array.isArray(job.data.slugs) ? (job.data.slugs as string[]) : undefined,
       all: !!job.data.all,
       stale: job.data.all ? false : (job.data.stale !== false),
+      onProgress: (done, total, embedded) => {
+        // Fire-and-forget: progress updates are best-effort and must not
+        // block the worker loop.
+        job.updateProgress({ done, total, embedded, phase: 'embed.pages' }).catch(() => {});
+      },
     });
     return { embedded: true };
   });

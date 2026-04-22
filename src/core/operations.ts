@@ -167,6 +167,13 @@ export interface OperationContext {
    * When unset, operations MUST default to the stricter (remote=true) behavior.
    */
   remote?: boolean;
+  /**
+   * Resolved global CLI options (--quiet / --progress-json / --progress-interval).
+   * CLI callers populate this from `getCliOptions()`. MCP / library callers
+   * may leave it undefined — consumers default to quiet/no-progress for
+   * background work.
+   */
+  cliOpts?: { quiet: boolean; progressJson: boolean; progressInterval: number };
 }
 
 export interface Operation {

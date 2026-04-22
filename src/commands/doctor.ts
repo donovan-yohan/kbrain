@@ -4,6 +4,8 @@ import { LATEST_VERSION } from '../core/migrate.ts';
 import { checkResolvable } from '../core/check-resolvable.ts';
 import { autoFixDryViolations, type AutoFixReport, type FixOutcome } from '../core/dry-fix.ts';
 import { loadCompletedMigrations } from '../core/preferences.ts';
+import { createProgress, startHeartbeat, type ProgressReporter } from '../core/progress.ts';
+import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
 import type { DbUrlSource } from '../core/config.ts';
 import { join } from 'path';
 import { existsSync, readFileSync, readdirSync } from 'fs';
@@ -32,6 +34,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   const dryRun = args.includes('--dry-run');
   const checks: Check[] = [];
   let autoFixReport: AutoFixReport | null = null;
+
+  // Progress reporter. `--json` is doctor's own JSON output (list of checks);
+  // progress events stay on stderr regardless, gated by the global --quiet /
+  // --progress-json flags. On a 52K-page brain the DB checks can take minutes,
+  // and without a heartbeat agents can't tell doctor from a hang.
+  const progress = createProgress(cliOptsToProgressOptions(getCliOptions()));
 
   // --- Filesystem checks (always run, no DB needed) ---
 
@@ -196,19 +204,27 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     return;
   }
 
+  // DB checks phase — start a single reporter phase so agents see which
+  // check is running (several take seconds on 50K-page brains; without a
+  // heartbeat the binary looks hung when stdout is piped).
+  progress.start('doctor.db_checks');
+
   // 3. Connection
+  progress.heartbeat('connection');
   try {
     const stats = await engine.getStats();
     checks.push({ name: 'connection', status: 'ok', message: `Connected, ${stats.page_count} pages` });
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e);
     checks.push({ name: 'connection', status: 'fail', message: msg });
+    progress.finish();
     const earlyFail2 = outputResults(checks, jsonOutput);
     process.exit(earlyFail2 ? 1 : 0);
     return;
   }
 
   // 4. pgvector extension
+  progress.heartbeat('pgvector');
   try {
     const sql = db.getConnection();
     const ext = await sql`SELECT extname FROM pg_extension WHERE extname = 'vector'`;
@@ -222,6 +238,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   }
 
   // 5. RLS
+  progress.heartbeat('rls');
   try {
     const sql = db.getConnection();
     const tables = await sql`
@@ -246,6 +263,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // never ran. That's the same class as a half-migrated install, just from a
   // different root cause (Bun blocked our top-level postinstall on global
   // install). Message is actionable either way.
+  progress.heartbeat('schema_version');
   let schemaVersion = 0;
   try {
     const version = await engine.getConfig('version');
@@ -278,6 +296,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // but `apply-migrations` didn't follow up.
 
   // 7. Embedding health
+  progress.heartbeat('embeddings');
   try {
     const health = await engine.getHealth();
     const pct = (health.embed_coverage * 100).toFixed(0);
@@ -293,6 +312,8 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   }
 
   // 8. Graph health (link + timeline coverage on entity pages).
+  // dead_links removed in v0.10.1: ON DELETE CASCADE on link FKs makes it always 0.
+  progress.heartbeat('graph_coverage');
   try {
     const health = await engine.getHealth();
     const linkPct = ((health.link_coverage ?? 0) * 100).toFixed(0);
@@ -335,6 +356,8 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // Read-only — no network, no writes, no resolver calls. Samples the first
   // 500 pages by slug order and surfaces bare-tweet + dead-link counts as a
   // warning. Full-brain scan: `gbrain integrity check`.
+  progress.heartbeat('integrity_sample');
+  const integrityHb = startHeartbeat(progress, 'scanning 500-page integrity sample…');
   try {
     const { scanIntegrity } = await import('./integrity.ts');
     const res = await scanIntegrity(engine, { limit: 500 });
@@ -360,24 +383,31 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
     }
   } catch (e) {
     checks.push({ name: 'integrity', status: 'warn', message: `integrity scan skipped: ${e instanceof Error ? e.message : String(e)}` });
+  } finally {
+    integrityHb();
   }
 
   // 10. JSONB integrity (v0.12.3 reliability wave).
   // v0.12.0's JSON.stringify()::jsonb pattern stored JSONB string literals
   // instead of objects on real Postgres. PGLite masked this; Supabase did not.
-  // Scan the 4 known sites (pages.frontmatter, raw_data.data, ingest_log.pages_updated,
-  // files.metadata) for rows whose top-level jsonb_typeof is 'string'.
+  // Scan 5 known write sites for rows whose top-level jsonb_typeof is
+  // 'string'. `page_versions.frontmatter` added in v0.15.2 so doctor's
+  // surface matches `repair-jsonb` (the previous 4-target scan missed a
+  // repair target, per #254/Codex review).
+  progress.heartbeat('jsonb_integrity');
   try {
     const sql = db.getConnection();
     const targets: Array<{ table: string; col: string; expected: 'object' | 'array' }> = [
-      { table: 'pages',      col: 'frontmatter',    expected: 'object' },
-      { table: 'raw_data',   col: 'data',           expected: 'object' },
-      { table: 'ingest_log', col: 'pages_updated',  expected: 'array'  },
-      { table: 'files',      col: 'metadata',       expected: 'object' },
+      { table: 'pages',         col: 'frontmatter',    expected: 'object' },
+      { table: 'raw_data',      col: 'data',           expected: 'object' },
+      { table: 'ingest_log',    col: 'pages_updated',  expected: 'array'  },
+      { table: 'files',         col: 'metadata',       expected: 'object' },
+      { table: 'page_versions', col: 'frontmatter',    expected: 'object' },
     ];
     let totalBad = 0;
     const breakdown: string[] = [];
     for (const { table, col } of targets) {
+      progress.heartbeat(`jsonb_integrity.${table}.${col}`);
       const rows = await sql.unsafe(
         `SELECT count(*)::int AS n FROM ${table} WHERE jsonb_typeof(${col}) = 'string'`,
       );
@@ -401,6 +431,12 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // v0.12.0's splitBody ate everything after the first `---` horizontal rule,
   // truncating wiki-style pages. Heuristic: pages whose body is <30% of the
   // raw source content length when raw has multiple H2/H3 boundaries.
+  //
+  // No total on this check: the regex scan over rd.data -> 'content' is a
+  // sequential scan that LIMIT 100 bounds only the output, not the scan
+  // work. We heartbeat every second so agents see life, no fake totals.
+  progress.heartbeat('markdown_body_completeness');
+  const mbcHb = startHeartbeat(progress, 'scanning pages for truncation…');
   try {
     const sql = db.getConnection();
     const rows = await sql`
@@ -428,9 +464,11 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   } catch {
     // pages_raw.raw_data may not exist on older schemas; best-effort.
     checks.push({ name: 'markdown_body_completeness', status: 'ok', message: 'Skipped (raw_data unavailable)' });
+  } finally {
+    mbcHb();
   }
 
-  // 11. Index audit (opt-in via --index-audit). v0.13.1 follow-up to #170.
+  // 12. Index audit (opt-in via --index-audit). v0.13.1 follow-up to #170.
   // Reports indexes with zero recorded scans on Postgres. Informational only;
   // we DO NOT auto-drop. On #170's brain, idx_pages_frontmatter and
   // idx_pages_trgm showed 0 scans — the suggestion there is "consider
@@ -438,6 +476,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
   // fresh install is also normal (nothing has queried yet); the real signal
   // is zero scans on a long-running active brain.
   if (args.includes('--index-audit')) {
+    progress.heartbeat('index_audit');
     if (engine.kind === 'pglite') {
       checks.push({
         name: 'index_audit',
@@ -474,6 +513,8 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
       }
     }
   }
+
+  progress.finish();
 
   const hasFail = outputResults(checks, jsonOutput);
 
