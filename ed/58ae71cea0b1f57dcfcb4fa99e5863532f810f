@@ -1,0 +1,54 @@
+src/core/operations.ts
+  61afe7c0820d0af4 17,274-281
+src/core/search/expansion.ts
+  68b95bf4b8243dc3 2,4,6-17,19-20,26-27,34,36,45-63,69-73,81-82,116-121,132-136,138,141,161,169-223,229-232
+  61afe7c0820d0af4 37-41,64-68
+src/core/config.ts
+  61afe7c0820d0af4 32-33,84-85,157-163,171-177,179,181-182
+  68b95bf4b8243dc3 6-21,34-50,79-83,86-103,106-107,134-153,155-156,164-170,178,180,183
+src/core/transcription.ts
+  68b95bf4b8243dc3 4-13,19,41,44,79-81,101-103,110,115-116,131-140
+  61afe7c0820d0af4 104-105,112-114
+src/core/embedding.ts
+  68b95bf4b8243dc3 4-12,18,27-28,31-32,37-40,43-44,60-69,87-88,91-96,98-111,118-119,121,126,145-163,166
+  61afe7c0820d0af4 29-30,33-36,41-42,46-51,164-165
+src/core/search/hybrid.ts
+  68b95bf4b8243dc3 16,86-89,92-93
+  61afe7c0820d0af4 81-85,90-91
+src/core/schema-render.ts
+  68b95bf4b8243dc3 1-24,37-38,40
+  61afe7c0820d0af4 25-36,39
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "ed58ae71cea0b1f57dcfcb4fa99e5863532f810f",
+  "prompts": {
+    "61afe7c0820d0af4": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9c00f8d7-e2c0-4360-8ef8-469091b7eb59",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 81,
+      "total_deletions": 29,
+      "accepted_lines": 81,
+      "overriden_lines": 0
+    },
+    "68b95bf4b8243dc3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55175776-a652-4136-9a24-e6fd14e729e5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 351,
+      "overriden_lines": 0
+    }
+  }
+}
