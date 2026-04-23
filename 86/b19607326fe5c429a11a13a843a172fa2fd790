@@ -1,0 +1,23 @@
+docs/guides/local-models-proxmox.md
+  68b95bf4b8243dc3 1-420
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.0",
+  "base_commit_sha": "86b19607326fe5c429a11a13a843a172fa2fd790",
+  "prompts": {
+    "68b95bf4b8243dc3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55175776-a652-4136-9a24-e6fd14e729e5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 420,
+      "overriden_lines": 0
+    }
+  }
+}
