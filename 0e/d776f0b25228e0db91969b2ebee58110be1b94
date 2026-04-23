@@ -1,0 +1,229 @@
+docs/GBRAIN_VERIFY.md
+  8d905fa5fb32c0d9 227-263,287-289,292
+src/commands/upgrade.ts
+  8d905fa5fb32c0d9 2,64-75,97-126
+VERSION
+  8d905fa5fb32c0d9 1
+src/cli.ts
+  8d905fa5fb32c0d9 21,280-289,319-323,430-434,543
+skills/migrations/v0.14.0.md
+  8d905fa5fb32c0d9 1-185
+src/commands/resolvers.ts
+  8d905fa5fb32c0d9 1-192
+src/commands/migrations/index.ts
+  8d905fa5fb32c0d9 16-18,23-25
+src/core/minions/quiet-hours.ts
+  8d905fa5fb32c0d9 1-94
+test/apply-migrations.test.ts
+  8d905fa5fb32c0d9 105-108,144-147
+docs/designs/KNOWLEDGE_RUNTIME.md
+  8d905fa5fb32c0d9 1-717
+package.json
+  8d905fa5fb32c0d9 3,23,25
+test/benchmark-put-page-latency.ts
+  8d905fa5fb32c0d9 1-127
+src/core/markdown.ts
+  8d905fa5fb32c0d9 25-26,30-34,67,69-77,81-85,87-92,95-103,106-111,116,143,152-156,158-163
+test/enrichment.test.ts
+  8d905fa5fb32c0d9 1-320
+CHANGELOG.md
+  8d905fa5fb32c0d9 5-444
+src/core/output/validators/index.ts
+  8d905fa5fb32c0d9 1-19
+src/core/resolvers/interface.ts
+  8d905fa5fb32c0d9 1-158
+src/core/utils.ts
+  8d905fa5fb32c0d9 46-112,120
+test/extract.test.ts
+  8d905fa5fb32c0d9 36,39,45,48,52,54-57,60,64-66,68-69,72-76,79-88,91,95,98
+src/core/output/slug-registry.ts
+  8d905fa5fb32c0d9 1-147
+test/e2e/graph-quality.test.ts
+  8d905fa5fb32c0d9 168-239
+src/core/pglite-schema.ts
+  8d905fa5fb32c0d9 65,67-77,82-83
+test/sync.test.ts
+  8d905fa5fb32c0d9 193-207
+src/commands/migrations/v0_12_0.ts
+  8d905fa5fb32c0d9 42-45
+src/core/enrichment/completeness.ts
+  8d905fa5fb32c0d9 1-274
+INSTALL_FOR_AGENTS.md
+  8d905fa5fb32c0d9 130,148-154
+test/link-extraction.test.ts
+  8d905fa5fb32c0d9 5,7,10-11,78-91,93-95,99,107,109,114-117,123-126,131-135,138-142,336-609
+test/markdown.test.ts
+  8d905fa5fb32c0d9 5,14,93-101,107-136,143,146-156,161,173,196,206-224,228-232,234-237,247,269-282
+src/core/enrichment/budget.ts
+  8d905fa5fb32c0d9 1-364
+src/core/resolvers/registry.ts
+  8d905fa5fb32c0d9 1-151
+src/core/output/scaffold.ts
+  8d905fa5fb32c0d9 1-236
+test/migrations-v0_13_1.test.ts
+  8d905fa5fb32c0d9 1-82
+test/orphans.test.ts
+  8d905fa5fb32c0d9 1-203
+test/writer.test.ts
+  8d905fa5fb32c0d9 1-714
+docs/GBRAIN_SKILLPACK.md
+  8d905fa5fb32c0d9 55
+src/core/pglite-engine.ts
+  8d905fa5fb32c0d9 5,324-333,335-338,341-369,371,374-384,392-399,412-414,418,427-429,433,440-464,682-701
+src/core/minions/protected-names.ts
+  8d905fa5fb32c0d9 1-20
+src/commands/migrate-engine.ts
+  8d905fa5fb32c0d9 245-298
+src/core/minions/types.ts
+  8d905fa5fb32c0d9 78-81,123-135,162,164-168,321-322
+src/core/resolvers/builtin/x-api/handle-to-tweet.ts
+  8d905fa5fb32c0d9 1-428
+test/migrations-v0_12_2.test.ts
+  8d905fa5fb32c0d9 1-59
+test/postgres-engine.test.ts
+  8d905fa5fb32c0d9 1-112
+src/core/output/validators/back-link.ts
+  8d905fa5fb32c0d9 1-51
+docs/guides/minions-shell-jobs.md
+  8d905fa5fb32c0d9 1-167
+src/core/link-extraction.ts
+  8d905fa5fb32c0d9 30-41,43,48-64,112-119,123-135,142-150,157-182,191-197,199-200,202-203,207-208,223,231-234,245,249-252,254-255,259,264,354-619,717-725
+src/commands/migrations/v0_13_1.ts
+  8d905fa5fb32c0d9 1-299
+src/core/migrate.ts
+  8d905fa5fb32c0d9 26-28,235-237,241-242,248,258-260,262-263,269,287-405
+src/commands/integrity.ts
+  8d905fa5fb32c0d9 1-678
+src/core/postgres-engine.ts
+  8d905fa5fb32c0d9 2,20,107,191-199,201,227-228,245-250,266-267,279-280,358-366,378-380,382-385,388-390,394-429,431-441,448-454,467-469,473,482-484,488,494-523,739-760,797,975
+test/utils.test.ts
+  8d905fa5fb32c0d9 2,101-172
+src/core/output/validators/link.ts
+  8d905fa5fb32c0d9 1-150
+test/import-file.test.ts
+  8d905fa5fb32c0d9 255
+test/integrity.test.ts
+  8d905fa5fb32c0d9 1-290
+src/core/output/validators/triple-hr.ts
+  8d905fa5fb32c0d9 1-97
+src/schema.sql
+  8d905fa5fb32c0d9 51-61,63-76,81-82
+src/commands/migrations/v0_13_0.ts
+  8d905fa5fb32c0d9 1-175
+src/core/minions/handlers/shell.ts
+  8d905fa5fb32c0d9 1-311
+docs/UPGRADING_DOWNSTREAM_AGENTS.md
+  8d905fa5fb32c0d9 3-4,16,25,158,180-359
+test/fail-improve.test.ts
+  8d905fa5fb32c0d9 157-216
+README.md
+  8d905fa5fb32c0d9 221-222,541-542
+test/benchmark-knowledge-runtime.ts
+  8d905fa5fb32c0d9 1-392
+TODOS.md
+  8d905fa5fb32c0d9 87-123,231-273
+skills/migrate/SKILL.md
+  8d905fa5fb32c0d9 53-63
+src/core/minions/queue.ts
+  8d905fa5fb32c0d9 18-27,68-78,81-86,137,141-143,148-150,154,172-173
+src/core/minions/stagger.ts
+  8d905fa5fb32c0d9 1-35
+src/core/resolvers/builtin/url-reachable.ts
+  8d905fa5fb32c0d9 1-332
+src/core/resolvers/index.ts
+  8d905fa5fb32c0d9 1-26
+src/core/fail-improve.ts
+  8d905fa5fb32c0d9 52-70,85-93,98-100,102-104,109,115-117,121,123-125
+src/commands/extract.ts
+  8d905fa5fb32c0d9 21,24-35,83-93,96-97,99,101,104-117,121-161,170-171,184-193,195-196,203-204,207,213-251,342-345,383,418-433,435-436,438,443,445-448,452-453,461,475-489,491-492,494,501-504,508-509,517,537,573-584,589-608,621-628,630-634,636-640,643-644,647,651-660,668,673-686,688,702-721,737-740,751-752,760
+src/commands/migrations/v0_12_2.ts
+  8d905fa5fb32c0d9 1-141
+src/core/types.ts
+  8d905fa5fb32c0d9 2,85-104
+src/core/schema-embedded.ts
+  8d905fa5fb32c0d9 55-65,67-80,85-86
+test/doctor.test.ts
+  8d905fa5fb32c0d9 43-60
+test/minions-quiet-hours.test.ts
+  8d905fa5fb32c0d9 1-215
+skills/migrations/v0.13.0.md
+  8d905fa5fb32c0d9 1-92
+src/core/output/validators/citation.ts
+  8d905fa5fb32c0d9 1-180
+src/commands/jobs.ts
+  8d905fa5fb32c0d9 60-61,71-82,108-113,124,136-140,146-180,531-542
+src/core/minions/handlers/shell-audit.ts
+  8d905fa5fb32c0d9 1-75
+test/minions-shell.test.ts
+  8d905fa5fb32c0d9 1-342
+test/pglite-engine.test.ts
+  8d905fa5fb32c0d9 354-464
+test/resolvers.test.ts
+  8d905fa5fb32c0d9 1-622
+src/commands/files.ts
+  8d905fa5fb32c0d9 254
+docs/benchmarks/2026-04-19-knowledge-runtime-v0.13.md
+  8d905fa5fb32c0d9 1-190
+src/core/engine.ts
+  8d905fa5fb32c0d9 14-41,83-103,107-110,112,115-132,170-176
+src/core/output/post-write.ts
+  8d905fa5fb32c0d9 1-157
+src/core/output/writer.ts
+  8d905fa5fb32c0d9 1-330
+scripts/check-jsonb-pattern.sh
+  8d905fa5fb32c0d9 1-32
+test/e2e/jsonb-roundtrip.test.ts
+  8d905fa5fb32c0d9 1-129
+test/e2e/mechanical.test.ts
+  8d905fa5fb32c0d9 289-417
+test/extract-fs.test.ts
+  8d905fa5fb32c0d9 1-161
+src/core/operations.ts
+  8d905fa5fb32c0d9 16,225,255-260,263,273-318,326-327,347,349-353,358-370,375-409,413-431,433-441,447-463,465,475-476,1054,1056,1062,1066-1078,1081-1085,1090-1091,1245-1262,1291-1292
+skills/migrations/v0.12.1.md
+  8d905fa5fb32c0d9 1-107
+test/post-write-lint.test.ts
+  8d905fa5fb32c0d9 1-130
+test/repair-jsonb.test.ts
+  8d905fa5fb32c0d9 1-37
+test/e2e/postgres-jsonb.test.ts
+  8d905fa5fb32c0d9 1-174
+src/core/minions/worker.ts
+  8d905fa5fb32c0d9 23-34,52-58,98-101,105-107,151-161,193-246,262,276,303-307,314,364-371,373-378
+test/migrate.test.ts
+  8d905fa5fb32c0d9 1-3,18-202
+test/e2e/minions-shell.test.ts
+  8d905fa5fb32c0d9 1-135
+src/commands/repair-jsonb.ts
+  8d905fa5fb32c0d9 1-151
+CLAUDE.md
+  8d905fa5fb32c0d9 48,62,64,66-67,87,89,91-95,103-109,130,176-182,185,189,192,194,198-199,220,226-234,237,240-241,300,389-436,507,515-545
+src/commands/doctor.ts
+  8d905fa5fb32c0d9 100-125,237-333
+src/commands/orphans.ts
+  8d905fa5fb32c0d9 1-227
+docs/integrations/reliability-repair.md
+  8d905fa5fb32c0d9 1-66
+src/commands/sync.ts
+  8d905fa5fb32c0d9 206-223,225-227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "0ed776f0b25228e0db91969b2ebee58110be1b94",
+  "prompts": {
+    "8d905fa5fb32c0d9": {
+      "agent_id": {
+        "tool": "codex",
+        "id": "019da8ec-6396-7e02-b883-46f8adc6d05d",
+        "model": "gpt-5.4"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 15509,
+      "total_deletions": 390,
+      "accepted_lines": 15507,
+      "overriden_lines": 2
+    }
+  }
+}
