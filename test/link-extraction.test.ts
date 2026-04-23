@@ -104,6 +104,56 @@ describe('extractPageLinks', () => {
     expect(aliceLink!.linkType).toBe('works_at');
   });
 
+  test('uses research-wiki frontmatter emitters when the profile is selected', async () => {
+    const previousProfileId = process.env.GBRAIN_PROFILE_ID;
+    process.env.GBRAIN_PROFILE_ID = 'research-wiki';
+
+    try {
+      const { candidates } = await extractPageLinks(
+        'papers/attention-is-all-you-need',
+        'Paper notes.',
+        { related_papers: ['papers/transformers-v2'] },
+        'paper',
+        allowAllResolver,
+      );
+
+      const cites = candidates.find(c => c.linkType === 'cites');
+      expect(cites).toBeDefined();
+      expect(cites!.targetSlug).toBe('papers/transformers-v2');
+    } finally {
+      if (previousProfileId === undefined) {
+        delete process.env.GBRAIN_PROFILE_ID;
+      } else {
+        process.env.GBRAIN_PROFILE_ID = previousProfileId;
+      }
+    }
+  });
+
+  test('uses private-finance frontmatter emitters when the profile is selected', async () => {
+    const previousProfileId = process.env.GBRAIN_PROFILE_ID;
+    process.env.GBRAIN_PROFILE_ID = 'private-finance';
+
+    try {
+      const { candidates } = await extractPageLinks(
+        'transactions/payroll',
+        'Transaction notes.',
+        { account: 'accounts/checking' },
+        'transaction',
+        allowAllResolver,
+      );
+
+      const recordedIn = candidates.find(c => c.linkType === 'recorded_in');
+      expect(recordedIn).toBeDefined();
+      expect(recordedIn!.targetSlug).toBe('accounts/checking');
+    } finally {
+      if (previousProfileId === undefined) {
+        delete process.env.GBRAIN_PROFILE_ID;
+      } else {
+        process.env.GBRAIN_PROFILE_ID = previousProfileId;
+      }
+    }
+  });
+
   test('dedups multiple mentions of same entity (within-page dedup)', async () => {
     const content = '[Alice](people/alice) said this. Later, [Alice](people/alice) said that.';
     const { candidates } = await extractPageLinks('docs/x', content, {}, 'concept', allowAllResolver);
@@ -286,6 +336,21 @@ describe('isAutoLinkEnabled', () => {
   test('null/undefined -> true (default on)', async () => {
     const engine = makeFakeEngine(new Map());
     expect(await isAutoLinkEnabled(engine)).toBe(true);
+  });
+
+  test('private-finance policy defaults auto-link off', async () => {
+    const previousProfileId = process.env.GBRAIN_PROFILE_ID;
+    process.env.GBRAIN_PROFILE_ID = 'private-finance';
+    try {
+      const engine = makeFakeEngine(new Map());
+      expect(await isAutoLinkEnabled(engine)).toBe(false);
+    } finally {
+      if (previousProfileId === undefined) {
+        delete process.env.GBRAIN_PROFILE_ID;
+      } else {
+        process.env.GBRAIN_PROFILE_ID = previousProfileId;
+      }
+    }
   });
 
   test('"false" -> false', async () => {

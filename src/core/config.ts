@@ -4,7 +4,7 @@ import { homedir } from 'os';
 import type { EngineConfig } from './types.ts';
 import { DEFAULT_PROFILE_ID, resolveProfileId } from './profiles/catalog.ts';
 import type { ProfileId } from './profiles/types.ts';
-import { resolvePolicyId } from './policy.ts';
+import { resolvePolicyId, getPolicy } from './policy.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
@@ -163,6 +163,26 @@ export function getDbUrlSource(): DbUrlSource {
     // Config file exists but is unreadable/malformed — treat as null source.
     return null;
   }
+}
+
+export interface BrainIdentityDescriptor {
+  profile_id: ProfileId;
+  policy_id: string;
+  default_brain_scope: 'general' | 'private';
+  brain_routing_strategy: 'single' | 'dual-hermes-routed';
+}
+
+export function getBrainIdentity(config: GBrainConfig | null = loadConfig()): BrainIdentityDescriptor | null {
+  if (!config) return null;
+  const profileId = resolveProfileId(config.profile_id || DEFAULT_PROFILE_ID);
+  const resolvedPolicyId = resolvePolicyId(config.policy_id ?? profileId);
+  const policy = getPolicy(resolvedPolicyId);
+  return {
+    profile_id: profileId,
+    policy_id: resolvedPolicyId,
+    default_brain_scope: config.brain_scope || policy.default_brain_scope,
+    brain_routing_strategy: config.brain_routing_strategy || policy.brain_routing_strategy,
+  };
 }
 
 // Embedding config resolution with defaults. Returns values the embedding client should use.

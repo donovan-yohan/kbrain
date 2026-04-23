@@ -1,5 +1,5 @@
 import type { BrainEngine } from '../core/engine.ts';
-import { loadConfig } from '../core/config.ts';
+import { loadConfig, getBrainIdentity } from '../core/config.ts';
 
 function redactUrl(url: string): string {
   // Redact password in postgresql:// URLs
@@ -20,6 +20,23 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
       console.error('No config found. Run: gbrain init');
       process.exit(1);
     }
+    const wantsJson = args.includes('--json');
+    const brainIdentity = getBrainIdentity(config);
+    if (wantsJson) {
+      const redactedConfig = Object.fromEntries(
+        Object.entries(config).map(([k, v]) => {
+          if (typeof v === 'string' && v.includes('postgresql://')) {
+            return [k, redactUrl(v)];
+          }
+          if (typeof v === 'string' && (k.includes('key') || k.includes('secret'))) {
+            return [k, '***'];
+          }
+          return [k, v];
+        }),
+      );
+      console.log(JSON.stringify({ config: redactedConfig, brain_identity: brainIdentity }, null, 2));
+      return;
+    }
     console.log('GBrain config:');
     for (const [k, v] of Object.entries(config)) {
       const display = typeof v === 'string' && v.includes('postgresql://')
@@ -28,6 +45,9 @@ export async function runConfig(engine: BrainEngine, args: string[]) {
           ? '***'
           : v;
       console.log(`  ${k}: ${display}`);
+    }
+    if (brainIdentity) {
+      console.log('  brain_identity: ' + JSON.stringify(brainIdentity));
     }
     return;
   }

@@ -14,6 +14,8 @@
 
 import type { BrainEngine } from './engine.ts';
 import type { PageType } from './types.ts';
+import { loadConfig } from './config.ts';
+import { getPolicy } from './policy.ts';
 
 // ─── Entity references ──────────────────────────────────────────
 
@@ -488,6 +490,49 @@ export const FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
   { fields: ['related', 'see_also'], type: 'related_to', direction: 'outgoing', dirHint: '' },
 ];
 
+const RESEARCH_WIKI_FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
+  { fields: ['related_papers'], pageType: 'paper', type: 'cites', direction: 'outgoing', dirHint: 'papers' },
+  { fields: ['datasets'], pageType: 'paper', type: 'uses_dataset', direction: 'outgoing', dirHint: 'datasets' },
+  { fields: ['paper'], pageType: 'experiment', type: 'evaluates', direction: 'outgoing', dirHint: 'papers' },
+  { fields: ['dataset'], pageType: 'experiment', type: 'uses_dataset', direction: 'outgoing', dirHint: 'datasets' },
+];
+
+const PRIVATE_FINANCE_FRONTMATTER_LINK_MAP: FrontmatterFieldMapping[] = [
+  { fields: ['account'], pageType: 'transaction', type: 'recorded_in', direction: 'outgoing', dirHint: 'accounts' },
+  { fields: ['accounts'], pageType: 'position', type: 'held_at', direction: 'outgoing', dirHint: 'accounts' },
+  { fields: ['institution'], pageType: 'account', type: 'held_at', direction: 'outgoing', dirHint: 'companies' },
+];
+
+let cachedFrontmatterProfileId: string | undefined;
+let hasCachedFrontmatterProfileId = false;
+const cachedFrontmatterLinkMaps = new Map<string | undefined, FrontmatterFieldMapping[]>();
+
+function getActiveProfileId(): string | undefined {
+  if (!hasCachedFrontmatterProfileId) {
+    cachedFrontmatterProfileId = loadConfig()?.profile_id;
+    hasCachedFrontmatterProfileId = true;
+  }
+  return cachedFrontmatterProfileId;
+}
+
+function getFrontmatterLinkMap(): FrontmatterFieldMapping[] {
+  const profileId = getActiveProfileId();
+  const cachedMap = cachedFrontmatterLinkMaps.get(profileId);
+  if (cachedMap) {
+    return cachedMap;
+  }
+
+  let frontmatterLinkMap = FRONTMATTER_LINK_MAP;
+  if (profileId === 'research-wiki') {
+    frontmatterLinkMap = [...FRONTMATTER_LINK_MAP, ...RESEARCH_WIKI_FRONTMATTER_LINK_MAP];
+  } else if (profileId === 'private-finance') {
+    frontmatterLinkMap = [...FRONTMATTER_LINK_MAP, ...PRIVATE_FINANCE_FRONTMATTER_LINK_MAP];
+  }
+
+  cachedFrontmatterLinkMaps.set(profileId, frontmatterLinkMap);
+  return frontmatterLinkMap;
+}
+
 // ─── Slug resolver ──────────────────────────────────────────────
 
 export interface SlugResolver {
@@ -624,7 +669,7 @@ export async function extractFrontmatterLinks(
   const candidates: LinkCandidate[] = [];
   const unresolved: UnresolvedFrontmatterRef[] = [];
 
-  for (const mapping of FRONTMATTER_LINK_MAP) {
+  for (const mapping of getFrontmatterLinkMap()) {
     if (mapping.pageType && mapping.pageType !== pageType) continue;
     for (const field of mapping.fields) {
       const value = frontmatter[field];
@@ -774,7 +819,7 @@ function isValidDate(s: string): boolean {
  */
 export async function isAutoLinkEnabled(engine: BrainEngine): Promise<boolean> {
   const val = await engine.getConfig('auto_link');
-  if (val == null) return true;
+  if (val == null) return getPolicy(loadConfig()?.policy_id).allow_auto_link;
   const normalized = val.trim().toLowerCase();
   return !['false', '0', 'no', 'off'].includes(normalized);
 }
@@ -787,7 +832,7 @@ export async function isAutoLinkEnabled(engine: BrainEngine): Promise<boolean> {
  */
 export async function isAutoTimelineEnabled(engine: BrainEngine): Promise<boolean> {
   const val = await engine.getConfig('auto_timeline');
-  if (val == null) return true;
+  if (val == null) return getPolicy(loadConfig()?.policy_id).allow_auto_timeline;
   const normalized = val.trim().toLowerCase();
   return !['false', '0', 'no', 'off'].includes(normalized);
 }
