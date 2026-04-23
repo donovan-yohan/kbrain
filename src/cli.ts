@@ -6,6 +6,7 @@ import type { BrainEngine } from './core/engine.ts';
 import { operations, OperationError } from './core/operations.ts';
 import type { Operation, OperationContext } from './core/operations.ts';
 import { serializeMarkdown } from './core/markdown.ts';
+import { parseGlobalFlags, setCliOptions, getCliOptions } from './core/cli-options.ts';
 import { VERSION } from './version.ts';
 
 // Build CLI name -> operation lookup
@@ -18,10 +19,16 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'apply-migrations', 'skillpack-check', 'resolvers', 'integrity', 'repair-jsonb', 'orphans']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'dream', 'check-resolvable']);
 
 async function main() {
-  const args = process.argv.slice(2);
+  // Parse global flags (--quiet / --progress-json / --progress-interval)
+  // BEFORE command dispatch, so `gbrain --progress-json doctor` works.
+  // The stripped argv is what the command sees.
+  const rawArgs = process.argv.slice(2);
+  const { cliOpts, rest: args } = parseGlobalFlags(rawArgs);
+  setCliOptions(cliOpts);
+
   let command = args[0];
 
   if (!command || command === '--help' || command === '-h') {
@@ -148,6 +155,7 @@ function makeContext(engine: BrainEngine, params: Record<string, unknown>): Oper
     // Local CLI invocation — the user owns the machine; do not apply remote-caller
     // confinement (e.g., cwd-locked file_upload).
     remote: false,
+    cliOpts: getCliOptions(),
   };
 }
 
@@ -302,6 +310,11 @@ async function handleCliOnly(command: string, args: string[]) {
     await runLint(args);
     return;
   }
+  if (command === 'check-resolvable') {
+    const { runCheckResolvable } = await import('./commands/check-resolvable.ts');
+    await runCheckResolvable(args);
+    return;
+  }
   if (command === 'report') {
     const { runReport } = await import('./commands/report.ts');
     await runReport(args);
@@ -332,8 +345,11 @@ async function handleCliOnly(command: string, args: string[]) {
     // Doctor runs filesystem checks first (no DB needed), then DB checks.
     // --fast skips DB checks entirely.
     const { runDoctor } = await import('./commands/doctor.ts');
+    const { getDbUrlSource } = await import('./core/config.ts');
     if (args.includes('--fast')) {
-      await runDoctor(null, args);
+      // Pass the DB URL source so doctor can tell "no config at all" from
+      // "user chose --fast while config is present".
+      await runDoctor(null, args, getDbUrlSource());
     } else {
       try {
         const eng = await connectEngine();
@@ -341,8 +357,27 @@ async function handleCliOnly(command: string, args: string[]) {
         await eng.disconnect();
       } catch {
         // DB unavailable — still run filesystem checks
-        await runDoctor(null, args);
+        await runDoctor(null, args, getDbUrlSource());
       }
+    }
+    return;
+  }
+
+  if (command === 'dream') {
+    // Dream mirrors doctor's pattern: filesystem phases run without a DB,
+    // so an engine connection failure is non-fatal. runCycle honestly
+    // reports DB phases as skipped when engine is null.
+    const { runDream } = await import('./commands/dream.ts');
+    let eng: BrainEngine | null = null;
+    try {
+      eng = await connectEngine();
+    } catch {
+      // DB unavailable — lint + backlinks still run against the brain dir.
+    }
+    try {
+      await runDream(eng, args);
+    } finally {
+      if (eng) await eng.disconnect();
     }
     return;
   }
@@ -402,6 +437,11 @@ async function handleCliOnly(command: string, args: string[]) {
         await runJobs(engine, args);
         break;
       }
+      case 'agent': {
+        const { runAgent } = await import('./commands/agent.ts');
+        await runAgent(engine, args);
+        break;
+      }
       case 'sync': {
         const { runSync } = await import('./commands/sync.ts');
         await runSync(engine, args);
@@ -430,6 +470,11 @@ async function handleCliOnly(command: string, args: string[]) {
       case 'orphans': {
         const { runOrphans } = await import('./commands/orphans.ts');
         await runOrphans(engine, args);
+        break;
+      }
+      case 'sources': {
+        const { runSources } = await import('./commands/sources.ts');
+        await runSources(engine, args);
         break;
       }
     }
@@ -541,6 +586,9 @@ TOOLS
   check-backlinks <check|fix> [dir]  Find/fix missing back-links across brain
   lint <dir|file> [--fix]            Catch LLM artifacts, placeholder dates, bad frontmatter
   orphans [--json] [--count]         Find pages with no inbound wikilinks
+  dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).
+                                     See also: autopilot --install (continuous daemon).
+  check-resolvable [--json] [--fix]  Validate skill tree (reachability/MECE/DRY)
   report --type <name> --content ... Save timestamped report to brain/reports/
 
 JOBS (Minions)

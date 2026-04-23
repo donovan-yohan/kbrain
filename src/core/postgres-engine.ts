@@ -4,7 +4,7 @@ import { MAX_SEARCH_LIMIT, clampSearchLimit } from './engine.ts';
 import { runMigrations } from './migrate.ts';
 import { SCHEMA_SQL } from './schema-embedded.ts';
 import type {
-  Page, PageInput, PageFilters,
+  Page, PageInput, PageFilters, PageType,
   Chunk, ChunkInput,
   SearchResult, SearchOpts,
   Link, GraphNode, GraphPath,
@@ -20,6 +20,7 @@ import * as db from './db.ts';
 import { validateSlug, contentHash, rowToPage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding } from './utils.ts';
 
 export class PostgresEngine implements BrainEngine {
+  readonly kind = 'postgres' as const;
   private _sql: ReturnType<typeof postgres> | null = null;
 
   // Instance connection (for workers) or fall back to module global (backward compat)
@@ -31,15 +32,27 @@ export class PostgresEngine implements BrainEngine {
   // Lifecycle
   async connect(config: EngineConfig & { poolSize?: number }): Promise<void> {
     if (config.poolSize) {
-      // Instance-level connection for worker isolation
+      // Instance-level connection for worker isolation. resolvePoolSize lets
+      // GBRAIN_POOL_SIZE cap below the caller's requested size when set — the
+      // env var is a user escape hatch, so it wins.
       const url = config.database_url;
       if (!url) throw new GBrainError('No database URL', 'database_url is missing', 'Provide --url');
-      this._sql = postgres(url, {
-        max: config.poolSize,
+      const size = Math.min(config.poolSize, db.resolvePoolSize(config.poolSize));
+      // Honor PgBouncer transaction-mode detection on worker-instance pools too.
+      // Without this, `gbrain jobs work` against a Supabase pooler URL hits
+      // "prepared statement does not exist" under load just like the module
+      // singleton did before v0.15.4.
+      const prepare = db.resolvePrepare(url);
+      const opts: Record<string, unknown> = {
+        max: size,
         idle_timeout: 20,
         connect_timeout: 10,
         types: { bigint: postgres.BigInt },
-      });
+      };
+      if (typeof prepare === 'boolean') {
+        opts.prepare = prepare;
+      }
+      this._sql = postgres(url, opts);
       await this._sql`SELECT 1`;
     } else {
       // Module-level singleton (backward compat for CLI main engine)
@@ -82,7 +95,7 @@ export class PostgresEngine implements BrainEngine {
       Object.defineProperty(txEngine, 'sql', { get: () => tx });
       Object.defineProperty(txEngine, '_sql', { value: tx as unknown as ReturnType<typeof postgres>, writable: false });
       return fn(txEngine);
-    });
+    }) as Promise<T>;
   }
 
   // Pages CRUD
@@ -102,10 +115,14 @@ export class PostgresEngine implements BrainEngine {
     const hash = page.content_hash || contentHash(page);
     const frontmatter = page.frontmatter || {};
 
+    // v0.18.0 Step 2: source_id relies on schema DEFAULT 'default'. ON
+    // CONFLICT target becomes (source_id, slug) since global UNIQUE(slug)
+    // was dropped in migration v17. See pglite-engine.ts for matching
+    // notes; multi-source sync (Step 5) will surface an explicit sourceId.
     const rows = await sql`
       INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
-      VALUES (${slug}, ${page.type}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter)}, ${hash}, now())
-      ON CONFLICT (slug) DO UPDATE SET
+      VALUES (${slug}, ${page.type}, ${page.title}, ${page.compiled_truth}, ${page.timeline || ''}, ${sql.json(frontmatter as Parameters<typeof sql.json>[0])}, ${hash}, now())
+      ON CONFLICT (source_id, slug) DO UPDATE SET
         type = EXCLUDED.type,
         title = EXCLUDED.title,
         compiled_truth = EXCLUDED.compiled_truth,
@@ -152,7 +169,7 @@ export class PostgresEngine implements BrainEngine {
   async getAllSlugs(): Promise<Set<string>> {
     const sql = this.sql;
     const rows = await sql`SELECT slug FROM pages`;
-    return new Set(rows.map((r: { slug: string }) => r.slug));
+    return new Set(rows.map((r) => r.slug as string));
   }
 
   async resolveSlugs(partial: string): Promise<string[]> {
@@ -170,7 +187,7 @@ export class PostgresEngine implements BrainEngine {
       ORDER BY sim DESC
       LIMIT 5
     `;
-    return fuzzy.map((r: { slug: string }) => r.slug);
+    return fuzzy.map((r) => r.slug as string);
   }
 
   // Search
@@ -249,7 +266,7 @@ export class PostgresEngine implements BrainEngine {
       await sql`SET LOCAL statement_timeout = '8s'`;
       return await sql`
         SELECT
-          p.slug, p.id as page_id, p.title, p.type,
+          p.slug, p.id as page_id, p.title, p.type, p.source_id,
           cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source,
           1 - (cc.embedding <=> ${vecStr}::vector) AS score,
           false AS stale
@@ -331,7 +348,7 @@ export class PostgresEngine implements BrainEngine {
          model = COALESCE(EXCLUDED.model, content_chunks.model),
          token_count = EXCLUDED.token_count,
          embedded_at = COALESCE(EXCLUDED.embedded_at, content_chunks.embedded_at)`,
-      params,
+      params as Parameters<typeof sql.unsafe>[1],
     );
   }
 
@@ -343,7 +360,7 @@ export class PostgresEngine implements BrainEngine {
       WHERE p.slug = ${slug}
       ORDER BY cc.chunk_index
     `;
-    return rows.map(rowToChunk);
+    return rows.map((r) => rowToChunk(r as Record<string, unknown>));
   }
 
   async deleteChunks(slug: string): Promise<void> {
@@ -409,17 +426,21 @@ export class PostgresEngine implements BrainEngine {
     const linkSources = links.map(l => l.link_source || 'markdown');
     const originSlugs = links.map(l => l.origin_slug || null);
     const originFields = links.map(l => l.origin_field || null);
+    const fromSourceIds = links.map(l => l.from_source_id || 'default');
+    const toSourceIds = links.map(l => l.to_source_id || 'default');
+    const originSourceIds = links.map(l => l.origin_source_id || 'default');
     const result = await sql`
       INSERT INTO links (from_page_id, to_page_id, link_type, context, link_source, origin_page_id, origin_field)
       SELECT f.id, t.id, v.link_type, v.context, v.link_source, o.id, v.origin_field
       FROM unnest(
         ${fromSlugs}::text[], ${toSlugs}::text[], ${linkTypes}::text[],
         ${contexts}::text[], ${linkSources}::text[], ${originSlugs}::text[],
-        ${originFields}::text[]
-      ) AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field)
-      JOIN pages f ON f.slug = v.from_slug
-      JOIN pages t ON t.slug = v.to_slug
-      LEFT JOIN pages o ON o.slug = v.origin_slug
+        ${originFields}::text[], ${fromSourceIds}::text[], ${toSourceIds}::text[],
+        ${originSourceIds}::text[]
+      ) AS v(from_slug, to_slug, link_type, context, link_source, origin_slug, origin_field, from_source_id, to_source_id, origin_source_id)
+      JOIN pages f ON f.slug = v.from_slug AND f.source_id = v.from_source_id
+      JOIN pages t ON t.slug = v.to_slug AND t.source_id = v.to_source_id
+      LEFT JOIN pages o ON o.slug = v.origin_slug AND o.source_id = v.origin_source_id
       ON CONFLICT (from_page_id, to_page_id, link_type, link_source, origin_page_id) DO NOTHING
       RETURNING 1
     `;
@@ -540,7 +561,14 @@ export class PostgresEngine implements BrainEngine {
       )
       SELECT DISTINCT g.slug, g.title, g.type, g.depth,
         coalesce(
-          (SELECT jsonb_agg(jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
+          -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type)
+          -- edges that originate from different provenance (markdown body
+          -- vs frontmatter vs auto-extracted). The underlying links table
+          -- preserves every row with its origin_page_id / link_source —
+          -- the dedup is presentation-only for the legacy traverseGraph
+          -- aggregation. traversePaths has its own in-memory dedup at a
+          -- different layer. See plan Bug 6/10.
+          (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
            FROM links l2
            JOIN pages p3 ON p3.id = l2.to_page_id
            WHERE l2.from_page_id = g.id),
@@ -673,10 +701,26 @@ export class PostgresEngine implements BrainEngine {
       WHERE p.slug = ANY(${slugs}::text[])
       GROUP BY p.slug
     `;
-    for (const r of rows as { slug: string; cnt: number }[]) {
+    for (const r of rows as unknown as { slug: string; cnt: number }[]) {
       result.set(r.slug, Number(r.cnt));
     }
     return result;
+  }
+
+  async findOrphanPages(): Promise<Array<{ slug: string; title: string; domain: string | null }>> {
+    const sql = this.sql;
+    const rows = await sql`
+      SELECT
+        p.slug,
+        COALESCE(p.title, p.slug) AS title,
+        p.frontmatter->>'domain' AS domain
+      FROM pages p
+      WHERE NOT EXISTS (
+        SELECT 1 FROM links l WHERE l.to_page_id = p.id
+      )
+      ORDER BY p.slug
+    `;
+    return rows as unknown as Array<{ slug: string; title: string; domain: string | null }>;
   }
 
   // Tags
@@ -709,7 +753,7 @@ export class PostgresEngine implements BrainEngine {
       WHERE page_id = (SELECT id FROM pages WHERE slug = ${slug})
       ORDER BY tag
     `;
-    return rows.map((r: { tag: string }) => r.tag);
+    return rows.map((r) => r.tag as string);
   }
 
   // Timeline
@@ -739,19 +783,18 @@ export class PostgresEngine implements BrainEngine {
   async addTimelineEntriesBatch(entries: TimelineBatchInput[]): Promise<number> {
     if (entries.length === 0) return 0;
     const sql = this.sql;
-    // unnest() pattern: 5 array-typed bound parameters regardless of batch size.
     const slugs = entries.map(e => e.slug);
     const dates = entries.map(e => e.date);
-    // Normalize optional fields to '' to match per-row addTimelineEntry + NOT NULL DDL.
     const sources = entries.map(e => e.source || '');
     const summaries = entries.map(e => e.summary);
     const details = entries.map(e => e.detail || '');
+    const sourceIds = entries.map(e => e.source_id || 'default');
     const result = await sql`
       INSERT INTO timeline_entries (page_id, date, source, summary, detail)
       SELECT p.id, v.date::date, v.source, v.summary, v.detail
-      FROM unnest(${slugs}::text[], ${dates}::text[], ${sources}::text[], ${summaries}::text[], ${details}::text[])
-        AS v(slug, date, source, summary, detail)
-      JOIN pages p ON p.slug = v.slug
+      FROM unnest(${slugs}::text[], ${dates}::text[], ${sources}::text[], ${summaries}::text[], ${details}::text[], ${sourceIds}::text[])
+        AS v(slug, date, source, summary, detail, source_id)
+      JOIN pages p ON p.slug = v.slug AND p.source_id = v.source_id
       ON CONFLICT (page_id, date, summary) DO NOTHING
       RETURNING 1
     `;
@@ -794,7 +837,7 @@ export class PostgresEngine implements BrainEngine {
     const sql = this.sql;
     const result = await sql`
       INSERT INTO raw_data (page_id, source, data)
-      SELECT id, ${source}, ${sql.json(data as Record<string, unknown>)}
+      SELECT id, ${source}, ${sql.json(data as Parameters<typeof sql.json>[0])}
       FROM pages WHERE slug = ${slug}
       ON CONFLICT (page_id, source) DO UPDATE SET
         data = EXCLUDED.data,
@@ -893,9 +936,12 @@ export class PostgresEngine implements BrainEngine {
 
   async getHealth(): Promise<BrainHealth> {
     const sql = this.sql;
-    // dead_links omitted (always 0 under ON DELETE CASCADE on link FKs).
-    // orphan_pages now matches PGLite definition: no inbound links (regardless of outbound).
-    // stale_pages aligned to PGLite definition (page updated_at < latest timeline entry).
+    // Bug 11 doc-drift fix — orphan_pages means "islanded" (no inbound AND
+    // no outbound links), aligning both engines with the user-facing
+    // definition. The type comment previously said "no inbound" but the
+    // SQL required both — docs now match code so users can trust the
+    // number. A hub page that links out to many but has no back-references
+    // is working as intended, not an orphan.
     const [h] = await sql`
       WITH entity_pages AS (
         SELECT id, slug FROM pages WHERE type IN ('person', 'company')
@@ -943,13 +989,16 @@ export class PostgresEngine implements BrainEngine {
 
     // brain_score: 0-100 weighted average
     const linkDensity = pageCount > 0 ? Math.min(linkCount / pageCount, 1) : 0;
-    const timelineCoverage = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
+    const timelineCoverageWhole = pageCount > 0 ? Math.min(pagesWithTimeline / pageCount, 1) : 0;
     const noOrphans = pageCount > 0 ? 1 - (orphanPages / pageCount) : 1;
     const noDeadLinks = pageCount > 0 ? 1 - Math.min(deadLinks / pageCount, 1) : 1;
-    const brainScore = pageCount === 0 ? 0 : Math.round(
-      (embedCoverage * 0.35 + linkDensity * 0.25 + timelineCoverage * 0.15 +
-       noOrphans * 0.15 + noDeadLinks * 0.10) * 100
-    );
+    // Per-component points. Sum equals brainScore by construction.
+    const embedCoverageScore = pageCount === 0 ? 0 : Math.round(embedCoverage * 35);
+    const linkDensityScore = pageCount === 0 ? 0 : Math.round(linkDensity * 25);
+    const timelineCoverageScore = pageCount === 0 ? 0 : Math.round(timelineCoverageWhole * 15);
+    const noOrphansScore = pageCount === 0 ? 0 : Math.round(noOrphans * 15);
+    const noDeadLinksScore = pageCount === 0 ? 0 : Math.round(noDeadLinks * 10);
+    const brainScore = embedCoverageScore + linkDensityScore + timelineCoverageScore + noOrphansScore + noDeadLinksScore;
 
     return {
       page_count: pageCount,
@@ -958,12 +1007,18 @@ export class PostgresEngine implements BrainEngine {
       orphan_pages: orphanPages,
       missing_embeddings: Number(h.missing_embeddings),
       brain_score: brainScore,
+      dead_links: deadLinks,
       link_coverage: Number(h.link_coverage),
       timeline_coverage: Number(h.timeline_coverage),
-      most_connected: (connected as { slug: string; link_count: number }[]).map(c => ({
+      most_connected: (connected as unknown as { slug: string; link_count: number }[]).map(c => ({
         slug: c.slug,
         link_count: Number(c.link_count),
       })),
+      embed_coverage_score: embedCoverageScore,
+      link_density_score: linkDensityScore,
+      timeline_coverage_score: timelineCoverageScore,
+      no_orphans_score: noOrphansScore,
+      no_dead_links_score: noDeadLinksScore,
     };
   }
 
@@ -1028,11 +1083,11 @@ export class PostgresEngine implements BrainEngine {
       WHERE p.slug = ${slug}
       ORDER BY cc.chunk_index
     `;
-    return rows.map((r: Record<string, unknown>) => rowToChunk(r, true));
+    return rows.map((r) => rowToChunk(r as Record<string, unknown>, true));
   }
 
   async executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> {
     const conn = this.sql;
-    return conn.unsafe(sql, params) as unknown as T[];
+    return conn.unsafe(sql, params as Parameters<typeof conn.unsafe>[1]) as unknown as T[];
   }
 }
