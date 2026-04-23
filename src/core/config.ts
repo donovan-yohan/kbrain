@@ -4,6 +4,7 @@ import { homedir } from 'os';
 import type { EngineConfig } from './types.ts';
 import { DEFAULT_PROFILE_ID, resolveProfileId } from './profiles/catalog.ts';
 import type { ProfileId } from './profiles/types.ts';
+import { resolvePolicyId } from './policy.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
@@ -76,11 +77,6 @@ export function loadConfig(): GBrainConfig | null {
 
   const dbUrl = process.env.GBRAIN_DATABASE_URL || process.env.DATABASE_URL;
 
-  if (!fileConfig && !dbUrl) return null;
-
-  const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
-    || (fileConfig?.database_path ? 'pglite' : 'postgres');
-
   // Env vars override config file
   const envOverrides: Partial<GBrainConfig> = {};
   if (dbUrl) envOverrides.database_url = dbUrl;
@@ -105,11 +101,20 @@ export function loadConfig(): GBrainConfig | null {
   if (process.env.TRANSCRIPTION_MODEL) envOverrides.transcription_model = process.env.TRANSCRIPTION_MODEL;
   if (process.env.TRANSCRIPTION_API_KEY) envOverrides.transcription_api_key = process.env.TRANSCRIPTION_API_KEY;
   if (process.env.GBRAIN_PROFILE_ID) envOverrides.profile_id = resolveProfileId(process.env.GBRAIN_PROFILE_ID);
+  if (process.env.GBRAIN_POLICY_ID) envOverrides.policy_id = resolvePolicyId(process.env.GBRAIN_POLICY_ID);
+
+  if (!fileConfig && !dbUrl) return null;
+
+  const inferredEngine: 'postgres' | 'pglite' = fileConfig?.engine
+    || (fileConfig?.database_path ? 'pglite' : 'postgres');
+
+  const resolvedProfileId = resolveProfileId(fileConfig?.profile_id || envOverrides.profile_id || DEFAULT_PROFILE_ID);
 
   return {
     ...fileConfig,
     engine: inferredEngine,
-    profile_id: resolveProfileId(fileConfig?.profile_id || envOverrides.profile_id || DEFAULT_PROFILE_ID),
+    profile_id: resolvedProfileId,
+    policy_id: fileConfig?.policy_id || envOverrides.policy_id || resolvePolicyId(resolvedProfileId),
     ...envOverrides,
   } as GBrainConfig;
 }
