@@ -143,6 +143,11 @@
       "name": "skillpack-check",
       "path": "skillpack-check/SKILL.md",
       "description": "Agent-readable gbrain health report. Wraps doctor + apply-migrations --list into one JSON blob with exit codes. Cron-friendly for morning-briefing pipelines."
+    },
+    {
+      "name": "agent-bridge",
+      "path": "agent-bridge/SKILL.md",
+      "description": "Zero-overhead SSH integration for agents. ~80-token prompt replaces full MCP suite for Claude, Codex, Hermes."
     }
   ],
   "dependencies": {
