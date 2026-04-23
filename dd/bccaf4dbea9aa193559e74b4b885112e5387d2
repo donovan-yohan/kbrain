@@ -1,0 +1,47 @@
+src/core/config.ts
+  68b95bf4b8243dc3 6-21,32-48,77-99,102-103,130-149,151-165
+src/core/schema-embedded.ts
+  68b95bf4b8243dc3 89-90,224-225
+src/schema.sql
+  68b95bf4b8243dc3 85-86,220-221
+src/core/db.ts
+  68b95bf4b8243dc3 3,152
+src/core/schema-render.ts
+  68b95bf4b8243dc3 1-28
+src/core/postgres-engine.ts
+  68b95bf4b8243dc3 5,78
+src/core/transcription.ts
+  68b95bf4b8243dc3 4-13,19,41,44,79-81,101-103,110,115-116,131-140
+src/core/search/expansion.ts
+  68b95bf4b8243dc3 2,4,6-17,19-20,26-27,34,36-37,41-66,74-75,109-114,125-129,131,134,154,162-216,222-225
+src/core/pglite-schema.ts
+  68b95bf4b8243dc3 74-75,191-192
+src/core/pglite-engine.ts
+  68b95bf4b8243dc3 8,87
+src/core/operations.ts
+  68b95bf4b8243dc3 274-282
+src/core/embedding.ts
+  68b95bf4b8243dc3 4-12,18,27-38,40-43,52-61,79-80,83-88,90-103,110-111,113,118,137-156
+src/core/search/hybrid.ts
+  68b95bf4b8243dc3 16,81-88
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.2",
+  "base_commit_sha": "ddbccaf4dbea9aa193559e74b4b885112e5387d2",
+  "prompts": {
+    "68b95bf4b8243dc3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "55175776-a652-4136-9a24-e6fd14e729e5",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 393,
+      "overriden_lines": 0
+    }
+  }
+}
