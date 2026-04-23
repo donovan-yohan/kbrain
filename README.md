@@ -31,7 +31,7 @@ https://raw.githubusercontent.com/donovan-yohan/kbrain/master/INSTALL_FOR_AGENTS
 That's it. The agent clones the repo, installs kbrain, sets up the brain, loads 26 skills, and configures recurring jobs. You answer a few questions about API keys. ~30 minutes.
 
 If your agent doesn't auto-read `AGENTS.md`, point it at that file first:
-`https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` is the non-Claude
+`https://raw.githubusercontent.com/donovan-yohan/kbrain/master/AGENTS.md` is the non-Claude
 agent operating protocol (install, read order, trust boundary, common tasks). For
 the full doc map, use `llms.txt` at the same URL root.
 
@@ -44,10 +44,10 @@ gbrain import ~/notes/          # index your markdown
 gbrain query "what themes show up across my notes?"
 ```
 
-**Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
+**Do NOT use `bun install -g github:donovan-yohan/kbrain`.** Bun blocks the top-level
 postinstall hook on global installs, so schema migrations never run and the CLI
 aborts with `Aborted()` the first time it opens PGLite. Use `git clone + bun install
-&& bun link` as shown above. See [#218](https://github.com/garrytan/gbrain/issues/218).
+&& bun link` as shown above. See [#218](https://github.com/donovan-yohan/kbrain/issues/218).
 
 ```
 3 results (hybrid search, 0.12s):

@@ -314,7 +314,7 @@ export async function runDoctor(engine: BrainEngine | null, args: string[], dbSo
         name: 'schema_version',
         status: 'fail',
         message: `No schema version recorded. Migrations never ran. Fix: gbrain apply-migrations --yes. ` +
-                 `If you installed via 'bun install -g github:...', see https://github.com/garrytan/gbrain/issues/218.`,
+                 `If you installed via 'bun install -g github:...', see https://github.com/donovan-yohan/kbrain/issues/218.`,
       });
     } else {
       checks.push({

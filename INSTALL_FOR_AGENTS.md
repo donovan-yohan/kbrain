@@ -10,9 +10,9 @@ protocol (install, read order, trust boundary, common tasks). Claude Code reads
 `CLAUDE.md` automatically and can skip ahead.
 
 If you fetched this file by URL without cloning yet, the companion files live at:
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — full doc map
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — same map, inlined
+- `https://raw.githubusercontent.com/donovan-yohan/kbrain/master/AGENTS.md` — start here
+- `https://raw.githubusercontent.com/donovan-yohan/kbrain/master/llms.txt` — full doc map
+- `https://raw.githubusercontent.com/donovan-yohan/kbrain/master/llms-full.txt` — same map, inlined
 
 ## Step 1: Install GBrain
 
@@ -26,10 +26,10 @@ bun install && bun link
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
 
-> **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
+> **Do NOT use `bun install -g github:donovan-yohan/kbrain`.** Bun blocks the top-level
 > postinstall hook on global installs, so schema migrations never run and the CLI
 > aborts with `Aborted()` when it opens PGLite. Use the `git clone + bun link` path
-> above. Tracking issue: [#218](https://github.com/garrytan/gbrain/issues/218).
+> above. Tracking issue: [#218](https://github.com/donovan-yohan/kbrain/issues/218).
 
 ## Step 2: API Keys
 

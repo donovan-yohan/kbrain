@@ -57,12 +57,12 @@ export const DEFERRED: DeferredCheck[] = [
   {
     check: 5,
     name: 'trigger_routing_eval',
-    issue: 'https://github.com/garrytan/gbrain/issues?q=TBD-check-5',
+    issue: 'https://github.com/donovan-yohan/kbrain/issues?q=TBD-check-5',
   },
   {
     check: 6,
     name: 'brain_filing',
-    issue: 'https://github.com/garrytan/gbrain/issues?q=TBD-check-6',
+    issue: 'https://github.com/donovan-yohan/kbrain/issues?q=TBD-check-6',
   },
 ];
 
