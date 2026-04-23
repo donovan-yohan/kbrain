@@ -23,7 +23,9 @@ interface Migration {
 
 // Migrations are embedded here, not loaded from files.
 // Add new migrations at the end. Never modify existing ones.
-const MIGRATIONS: Migration[] = [
+// Exported for tests that structurally assert migration contents (e.g., "v9 must
+// pre-create idx_timeline_dedup_helper before the DELETE..."). Read-only contract.
+export const MIGRATIONS: Migration[] = [
   // Version 1 is the baseline (schema.sql creates everything with IF NOT EXISTS).
   {
     version: 2,
@@ -230,14 +232,20 @@ const MIGRATIONS: Migration[] = [
     // Idempotent for both upgrade and fresh-install paths.
     // Fresh installs already have links_from_to_type_unique from schema.sql; we drop it
     // (along with the legacy from-to-only constraint) before re-adding it cleanly.
+    // Helper btree on the dedup columns turns the DELETE...USING self-join from O(n²)
+    // into O(n log n). Without it, a brain with 80K+ duplicate link rows hits
+    // Supabase Management API's 60s ceiling during upgrade.
     sql: `
       ALTER TABLE links DROP CONSTRAINT IF EXISTS links_from_page_id_to_page_id_key;
       ALTER TABLE links DROP CONSTRAINT IF EXISTS links_from_to_type_unique;
+      CREATE INDEX IF NOT EXISTS idx_links_dedup_helper
+        ON links(from_page_id, to_page_id, link_type);
       DELETE FROM links a USING links b
         WHERE a.from_page_id = b.from_page_id
           AND a.to_page_id = b.to_page_id
           AND a.link_type = b.link_type
           AND a.id > b.id;
+      DROP INDEX IF EXISTS idx_links_dedup_helper;
       ALTER TABLE links ADD CONSTRAINT links_from_to_type_unique
         UNIQUE(from_page_id, to_page_id, link_type);
     `,
@@ -247,12 +255,18 @@ const MIGRATIONS: Migration[] = [
     name: 'timeline_dedup_index',
     // Idempotent: CREATE UNIQUE INDEX IF NOT EXISTS handles fresh + upgrade.
     // Dedup any existing duplicates first so the index can be created.
+    // Helper btree turns the DELETE...USING self-join from O(n²) into O(n log n).
+    // Without it, a brain with 80K+ duplicate timeline rows hits Supabase
+    // Management API's 60s ceiling. See migration v8 for the same pattern.
     sql: `
+      CREATE INDEX IF NOT EXISTS idx_timeline_dedup_helper
+        ON timeline_entries(page_id, date, summary);
       DELETE FROM timeline_entries a USING timeline_entries b
         WHERE a.page_id = b.page_id
           AND a.date = b.date
           AND a.summary = b.summary
           AND a.id > b.id;
+      DROP INDEX IF EXISTS idx_timeline_dedup_helper;
       CREATE UNIQUE INDEX IF NOT EXISTS idx_timeline_dedup
         ON timeline_entries(page_id, date, summary);
     `,
@@ -268,6 +282,127 @@ const MIGRATIONS: Migration[] = [
     sql: `
       DROP TRIGGER IF EXISTS trg_timeline_search_vector ON timeline_entries;
       DROP FUNCTION IF EXISTS update_page_search_vector_from_timeline();
+    `,
+  },
+  {
+    version: 11,
+    name: 'links_provenance_columns',
+    // v0.13: adds provenance columns so frontmatter-derived edges can be
+    // distinguished from markdown/manual edges. Reconciliation on put_page
+    // scopes by (link_source='frontmatter' AND origin_page_id = written_page)
+    // so edges from other pages never get mis-deleted.
+    //
+    // Unique constraint swaps: old (from, to, type) blocks coexistence of
+    // markdown + frontmatter + manual edges with the same tuple. New tuple
+    // includes link_source + origin_page_id.
+    //
+    // Existing rows keep link_source IS NULL (legacy marker) — they are NOT
+    // backfilled to 'markdown' because existing rows may be manual/imported
+    // /inferred; mislabeling them as markdown would corrupt provenance.
+    //
+    // Idempotent via IF NOT EXISTS / DROP IF EXISTS.
+    sql: `
+      -- Postgres version gate: UNIQUE NULLS NOT DISTINCT requires PG15+.
+      -- PGLite ships PG17.5, current Supabase is PG15+. Old Supabase projects
+      -- on PG14 hit an explicit error rather than half-applying (drop old
+      -- constraint but fail to add new one → brain loses uniqueness guarantee).
+      DO $$ BEGIN
+        IF current_setting('server_version_num')::int < 150000 THEN
+          RAISE EXCEPTION
+            'v0.13 migration requires Postgres 15+. Current: %. '
+            'Upgrade your Postgres (Supabase: migrate project to a newer PG major). '
+            'This migration intentionally stops before touching the schema to preserve data integrity.',
+            current_setting('server_version');
+        END IF;
+      END $$;
+
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS link_source TEXT;
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'links_link_source_check'
+        ) THEN
+          ALTER TABLE links ADD CONSTRAINT links_link_source_check
+            CHECK (link_source IS NULL OR link_source IN ('markdown', 'frontmatter', 'manual'));
+        END IF;
+      END $$;
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS origin_page_id INTEGER
+        REFERENCES pages(id) ON DELETE SET NULL;
+      ALTER TABLE links ADD COLUMN IF NOT EXISTS origin_field TEXT;
+      -- Backfill NULL link_source → 'markdown' for existing rows. Codex review
+      -- caught that without this, pre-v0.13 legacy rows coexist with new
+      -- 'markdown' writes under NULLS NOT DISTINCT (NULL ≠ 'markdown'),
+      -- causing duplicate edges to accumulate. Treating legacy as markdown
+      -- is the accurate best-guess: pre-v0.13 auto-link only emitted markdown
+      -- edges. User-created 'manual' edges are a v0.13+ concept anyway.
+      UPDATE links SET link_source = 'markdown' WHERE link_source IS NULL;
+      ALTER TABLE links DROP CONSTRAINT IF EXISTS links_from_to_type_unique;
+      DO $$ BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'links_from_to_type_source_origin_unique'
+        ) THEN
+          ALTER TABLE links ADD CONSTRAINT links_from_to_type_source_origin_unique
+            UNIQUE NULLS NOT DISTINCT (from_page_id, to_page_id, link_type, link_source, origin_page_id);
+        END IF;
+      END $$;
+      CREATE INDEX IF NOT EXISTS idx_links_source ON links(link_source);
+      CREATE INDEX IF NOT EXISTS idx_links_origin ON links(origin_page_id);
+    `,
+  },
+  {
+    version: 12,
+    name: 'budget_ledger',
+    // Resolver spend tracker. Primary key {scope, resolver_id, local_date} so
+    // midnight rollover in the user's TZ naturally creates a new row instead of
+    // mutating yesterday's. reserved_usd and committed_usd track reservations
+    // vs actuals so process death between reserve() and commit()/rollback()
+    // can be cleaned up by TTL scan. status and reserved_at exist for that
+    // reclaim path. Rollback: DROP TABLE (budget is regenerable from resolver
+    // call logs; no durable product data lives here).
+    sql: `
+      CREATE TABLE IF NOT EXISTS budget_ledger (
+        scope          TEXT        NOT NULL,
+        resolver_id    TEXT        NOT NULL,
+        local_date     DATE        NOT NULL,
+        reserved_usd   NUMERIC(12,4) NOT NULL DEFAULT 0,
+        committed_usd  NUMERIC(12,4) NOT NULL DEFAULT 0,
+        cap_usd        NUMERIC(12,4),
+        created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+        PRIMARY KEY (scope, resolver_id, local_date)
+      );
+      CREATE TABLE IF NOT EXISTS budget_reservations (
+        reservation_id TEXT        PRIMARY KEY,
+        scope          TEXT        NOT NULL,
+        resolver_id    TEXT        NOT NULL,
+        local_date     DATE        NOT NULL,
+        estimate_usd   NUMERIC(12,4) NOT NULL,
+        reserved_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+        expires_at     TIMESTAMPTZ NOT NULL,
+        status         TEXT        NOT NULL DEFAULT 'held'
+      );
+      CREATE INDEX IF NOT EXISTS idx_budget_reservations_expires
+        ON budget_reservations(expires_at) WHERE status = 'held';
+    `,
+  },
+  {
+    version: 13,
+    name: 'minion_quiet_hours_stagger',
+    // Adds quiet-hours gating + deterministic stagger to Minions.
+    //
+    // quiet_hours (JSONB): {start, end, tz, policy} — checked at claim
+    //   time by the worker, not at dispatch. A queued job inside its quiet
+    //   window is released back to 'waiting' and claimed again outside the
+    //   window. 'skip' policy drops the event, 'defer' re-queues.
+    // stagger_key (TEXT): hashed to a minute-slot offset so jobs with the
+    //   same key don't collide when a cron boundary fires. Optional; NULL
+    //   = no stagger. The hash lives in application code (deterministic,
+    //   ensures same key always lands on same slot) so the column is
+    //   just the key.
+    sql: `
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS quiet_hours JSONB;
+      ALTER TABLE minion_jobs ADD COLUMN IF NOT EXISTS stagger_key TEXT;
+      CREATE INDEX IF NOT EXISTS idx_minion_jobs_stagger_key
+        ON minion_jobs(stagger_key) WHERE stagger_key IS NOT NULL;
     `,
   },
 ];
