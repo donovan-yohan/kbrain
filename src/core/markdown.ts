@@ -3,6 +3,7 @@ import type { PageType } from './types.ts';
 import { slugifyPath } from './sync.ts';
 import { loadConfig } from './config.ts';
 import { DEFAULT_PROFILE_ID, inferTypeFromPath } from './profiles/catalog.ts';
+import type { ProfileId } from './profiles/types.ts';
 
 export interface ParsedMarkdown {
   frontmatter: Record<string, unknown>;
@@ -15,7 +16,7 @@ export interface ParsedMarkdown {
 }
 
 export interface ParseMarkdownOptions {
-  profileId?: 'general-assistant' | 'research-wiki' | 'private-finance';
+  profileId?: ProfileId;
 }
 
 /**
@@ -152,10 +153,6 @@ export function serializeMarkdown(
   }
 
   return yamlContent + '\n\n' + body + '\n';
-}
-
-function inferType(filePath?: string): PageType {
-  return inferTypeFromPath(filePath, loadConfig()?.profile_id || DEFAULT_PROFILE_ID);
 }
 
 function inferTitle(filePath?: string): string {

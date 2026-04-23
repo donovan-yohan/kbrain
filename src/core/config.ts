@@ -3,6 +3,7 @@ import { join } from 'path';
 import { homedir } from 'os';
 import type { EngineConfig } from './types.ts';
 import { DEFAULT_PROFILE_ID, resolveProfileId } from './profiles/catalog.ts';
+import type { ProfileId } from './profiles/types.ts';
 
 /**
  * Where is the active DB URL coming from? Pure introspection, no connection
@@ -28,7 +29,7 @@ export interface GBrainConfig {
   engine: 'postgres' | 'pglite';
   database_url?: string;
   database_path?: string;
-  profile_id?: 'general-assistant' | 'research-wiki' | 'private-finance';
+  profile_id?: ProfileId;
   policy_id?: string;
   brain_scope?: 'general' | 'private';
   brain_routing_strategy?: 'single' | 'dual-hermes-routed';

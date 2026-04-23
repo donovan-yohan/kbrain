@@ -77,7 +77,8 @@ export function inferTypeFromPath(filePath: string | undefined, profileId?: stri
   const profile = getProfile(profileId);
   if (!filePath) return profile.defaultType;
 
-  const lower = ('/' + filePath).toLowerCase();
+  const normalizedPath = filePath.replace(/\\/g, '/');
+  const lower = ('/' + normalizedPath).toLowerCase();
   for (const rule of profile.directoryRules) {
     if (rule.matchers.some(matcher => lower.includes(matcher))) {
       return rule.type;
