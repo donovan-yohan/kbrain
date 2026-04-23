@@ -2,7 +2,9 @@
 
 Your AI agent is smart but forgetful. kbrain gives it a brain.
 
-Fork of upstream gbrain with YC and founder-voice framing stripped. Primary target: **Hermes Agent**. OpenClaw is supported but secondary.
+Fork of [garrytan/gbrain](https://github.com/garrytan/gbrain) with YC and founder-voice framing stripped. Primary target: **Hermes Agent**. OpenClaw is supported but secondary.
+
+kbrain is a personal knowledge system. It ingests meetings, emails, tweets, voice calls, and original ideas. It enriches every person and company it encounters. It fixes its own citations and consolidates memory overnight.
 
 The brain wires itself. Every page write extracts entity references and creates typed links (`attended`, `works_at`, `invested_in`, `founded`, `advises`) with zero LLM calls. Hybrid search. Self-wiring knowledge graph. Structured timeline. Backlink-boosted ranking. Ask "who works at Acme AI?" or "what did Bob invest in this quarter?" and get answers vector search alone can't reach. Benchmarked end-to-end: **Recall@5 jumps from 83% to 95%, Precision@5 from 39% to 45%, +30 more correct answers in the agent's top-5 reads** on a 240-page Opus-generated rich-prose corpus. Graph-only F1: **86.6% vs grep's 57.8%** (+28.8 pts). [Full report](docs/benchmarks/2026-04-18-brainbench-v1.md).
 
@@ -91,7 +93,7 @@ Per-client guides: [`docs/mcp/`](docs/mcp/DEPLOY.md). ChatGPT requires OAuth 2.1
 
 GBrain ships 26 skills organized by `skills/RESOLVER.md`. The resolver tells your agent which skill to read for any task.
 
-[Skill files are code.](https://x.com/garrytan/status/2042925773300908103) They're the most powerful way to get knowledge work done. A skill file is a fat markdown document that encodes an entire workflow: when to fire, what to check, how to chain with other skills, what quality bar to enforce. The agent reads the skill and executes it. Skills can also call deterministic TypeScript code bundled in GBrain (search, import, embed, sync) for the parts that shouldn't be left to LLM judgment. [Thin harness, fat skills](docs/ethos/THIN_HARNESS_FAT_SKILLS.md): the intelligence lives in the skills, not the runtime.
+Skill files are code. They're the most powerful way to get knowledge work done. A skill file is a fat markdown document that encodes an entire workflow: when to fire, what to check, how to chain with other skills, what quality bar to enforce. The agent reads the skill and executes it. Skills can also call deterministic TypeScript code bundled in GBrain (search, import, embed, sync) for the parts that shouldn't be left to LLM judgment. [Thin harness, fat skills](docs/ethos/THIN_HARNESS_FAT_SKILLS.md): the intelligence lives in the skills, not the runtime.
 
 ### Always-on
 
@@ -300,15 +302,15 @@ GBrain ships integration recipes that your agent sets up for you. Each recipe te
 
 Run `gbrain integrations` to see status.
 
-## GBrain + GStack
+## kbrain + gstack
 
-[GStack](https://github.com/garrytan/gstack) is the engine. GBrain is the mod.
+[gstack-adfree](https://github.com/donovan-yohan/gstack-adfree) is the coding skill engine. kbrain is the knowledge mod.
 
-- **[GStack](https://github.com/garrytan/gstack)** = coding skills (ship, review, QA, investigate, office-hours, retro). 70,000+ stars, 30,000 developers per day. When your agent codes on itself, it uses GStack.
-- **GBrain** = everything-else skills (brain ops, signal detection, ingestion, enrichment, cron, reports, identity). When your agent remembers, thinks, and operates, it uses GBrain.
-- **`hosts/gbrain.ts`** = the bridge. Tells GStack's coding skills to check the brain before coding.
+- **gstack-adfree** — coding skills (ship, review, QA, investigate, office-hours, retro). When your agent codes on itself, it uses gstack.
+- **kbrain** — everything-else skills (brain ops, signal detection, ingestion, enrichment, cron, reports, identity). When your agent remembers, thinks, and operates, it uses kbrain.
+- **`hosts/gbrain.ts`** — the bridge. Tells gstack's coding skills to check the brain before coding.
 
-`gbrain init` detects if GStack is installed and reports mod status. If GStack isn't there, it tells you how to get it.
+`gbrain init` detects if gstack is installed and reports mod status. If gstack isn't there, it tells you how to get it.
 
 ## Architecture
 
@@ -476,9 +478,7 @@ Call a phone number. Your AI answers. It knows who's calling, pulls their full c
   <img src="docs/images/voice-client.png" alt="Voice client connected" width="300" />
 </p>
 
-> [See it in action](https://x.com/garrytan/status/2043022208512172263)
-
-The voice recipe ships with GBrain: [Voice-to-Brain](recipes/twilio-voice-brain.md). WebRTC works in a browser tab with zero setup. A real phone number is optional.
+The voice recipe ships with kbrain: [Voice-to-Brain](recipes/twilio-voice-brain.md). WebRTC works in a browser tab with zero setup. A real phone number is optional.
 
 ## Engine Architecture
 
@@ -577,14 +577,6 @@ ADMIN
 ```
 
 Run `gbrain --help` for the full reference.
-
-## Origin Story
-
-I was setting up my [OpenClaw](https://openclaw.ai) agent and started a markdown brain repo. One page per person, one page per company, compiled truth on top, timeline on the bottom. Within a week: 10,000+ files, 3,000+ people, 13 years of calendar data, 280+ meeting transcripts, 300+ captured ideas.
-
-The agent runs while I sleep. The dream cycle scans every conversation, enriches missing entities, fixes broken citations, consolidates memory. I wake up and the brain is smarter than when I went to sleep.
-
-The skills in this repo are those patterns, generalized. What took 11 days to build by hand ships as a mod you install in 30 minutes.
 
 ## Docs
 

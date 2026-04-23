@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/donovan-yohan/kbrain.git
+git clone https://github.com/donovan-yohan/kbrain.git gbrain
 cd gbrain
 bun install
 bun test

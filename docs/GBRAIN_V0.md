@@ -227,8 +227,8 @@ Step 4: Kindling Import
   ├── Import 10 bundled PG essays as demo data
   ├── Chunk + embed each essay
   ├── Show live entity/edge extraction animation:
-  │   "Extracting entities... Paul Graham (person), Y Combinator (company)..."
-  │   "Creating links... Paul Graham → Y Combinator (founded)..."
+  │   "Extracting entities... Ada Lovelace (person), Analytical Engine (concept)..."
+  │   "Creating links... Ada Lovelace → Analytical Engine (worked_on)..."
   └── Output: "Brain ready. 10 pages imported."
 
 Step 5: First Query

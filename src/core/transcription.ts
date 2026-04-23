@@ -1,13 +1,22 @@
 /**
  * Audio transcription service.
  *
- * Default provider: Groq Whisper (fast, cheap, OpenAI-compatible API format).
- * Fallback: OpenAI Whisper if Groq unavailable.
+ * Providers (OpenAI-compatible Whisper API shape):
+ *   - groq (default): Groq Whisper (fast, cheap, cloud)
+ *   - openai: OpenAI Whisper (cloud)
+ *   - custom: any OpenAI-compatible server (local faster-whisper, whisper.cpp server, etc.)
+ *
+ * Configure custom provider via env or ~/.gbrain/config.json:
+ *   TRANSCRIPTION_BASE_URL=http://localhost:9000/v1
+ *   TRANSCRIPTION_MODEL=whisper-large-v3
+ *   TRANSCRIPTION_API_KEY=sk-local
+ *
  * For files >25MB: ffmpeg segmentation into <25MB chunks, transcribe each, concatenate.
  */
 
 import { statSync, readFileSync } from 'fs';
 import { basename, extname } from 'path';
+import { loadConfig } from './config.ts';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -29,9 +38,10 @@ export interface TranscriptionResult {
 }
 
 export interface TranscriptionConfig {
-  provider?: 'groq' | 'openai' | 'deepgram';
+  provider?: 'groq' | 'openai' | 'deepgram' | 'custom';
   apiKey?: string;
   model?: string;
+  baseUrl?: string;
   language?: string;
   diarize?: boolean;
 }
@@ -66,7 +76,9 @@ export async function transcribe(
   const provider = config.provider || detectProvider();
   const apiKey = config.apiKey || getApiKey(provider);
   if (!apiKey) {
-    const envVar = provider === 'groq' ? 'GROQ_API_KEY' : 'OPENAI_API_KEY';
+    const envVar = provider === 'groq' ? 'GROQ_API_KEY'
+      : provider === 'custom' ? 'TRANSCRIPTION_API_KEY'
+      : 'OPENAI_API_KEY';
     throw new Error(
       `${provider} API key not set. Set ${envVar} environment variable. ` +
       (provider === 'groq' ? 'Or set OPENAI_API_KEY to use OpenAI Whisper as fallback.' : '')
@@ -86,17 +98,22 @@ export async function transcribe(
 // Provider detection
 // ---------------------------------------------------------------------------
 
-function detectProvider(): 'groq' | 'openai' {
-  if (process.env.GROQ_API_KEY) return 'groq';
-  if (process.env.OPENAI_API_KEY) return 'openai';
+function detectProvider(): 'groq' | 'openai' | 'custom' {
+  const cfg = loadConfig();
+  if (cfg?.transcription_base_url || process.env.TRANSCRIPTION_BASE_URL) return 'custom';
+  if (cfg?.groq_api_key || process.env.GROQ_API_KEY) return 'groq';
+  if (cfg?.openai_api_key || process.env.OPENAI_API_KEY) return 'openai';
   return 'groq'; // default, will fail with clear error if no key
 }
 
 function getApiKey(provider: string): string | undefined {
+  const cfg = loadConfig();
   switch (provider) {
-    case 'groq': return process.env.GROQ_API_KEY;
-    case 'openai': return process.env.OPENAI_API_KEY;
-    case 'deepgram': return process.env.DEEPGRAM_API_KEY;
+    case 'groq': return cfg?.groq_api_key || process.env.GROQ_API_KEY;
+    case 'openai': return cfg?.openai_api_key || process.env.OPENAI_API_KEY;
+    case 'deepgram': return cfg?.deepgram_api_key || process.env.DEEPGRAM_API_KEY;
+    case 'custom':
+      return cfg?.transcription_api_key || process.env.TRANSCRIPTION_API_KEY || 'sk-local';
     default: return undefined;
   }
 }
@@ -111,10 +128,16 @@ async function transcribeFile(
   apiKey: string,
   config: TranscriptionConfig,
 ): Promise<TranscriptionResult> {
-  const model = config.model || (provider === 'groq' ? 'whisper-large-v3' : 'whisper-1');
-  const baseUrl = provider === 'groq'
-    ? 'https://api.groq.com/openai/v1'
-    : 'https://api.openai.com/v1';
+  const cfg = loadConfig();
+  const defaultModel = provider === 'groq' ? 'whisper-large-v3'
+    : provider === 'custom' ? (cfg?.transcription_model || process.env.TRANSCRIPTION_MODEL || 'whisper-1')
+    : 'whisper-1';
+  const model = config.model || defaultModel;
+  const baseUrl = config.baseUrl || (
+    provider === 'groq' ? 'https://api.groq.com/openai/v1'
+    : provider === 'custom' ? (cfg?.transcription_base_url || process.env.TRANSCRIPTION_BASE_URL || 'http://localhost:9000/v1')
+    : 'https://api.openai.com/v1'
+  );
 
   // Both Groq and OpenAI use the same API format
   const fileData = readFileSync(audioPath);
