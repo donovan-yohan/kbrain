@@ -111,7 +111,9 @@ async function initPGLite(opts: { jsonOutput: boolean; apiKey: string | null; cu
     await engine.connect({ database_path: dbPath, engine: 'pglite' });
     await engine.initSchema();
 
+    const existingConfig = loadConfig();
     const config: GBrainConfig = {
+      ...existingConfig,
       engine: 'pglite',
       database_path: dbPath,
       ...(opts.apiKey ? { openai_api_key: opts.apiKey } : {}),
