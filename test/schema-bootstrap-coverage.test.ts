@@ -140,9 +140,9 @@ test('after bootstrap, PGLITE_SCHEMA_SQL replays without crashing on missing for
     `);
 
     // Bootstrap, then schema replay. Either step crashing fails the test.
-    const { PGLITE_SCHEMA_SQL } = await import('../src/core/pglite-schema.ts');
+    const { renderPGLiteSchema } = await import('../src/core/schema-render.ts');
     await (engine as any).applyForwardReferenceBootstrap();
-    await db.exec(PGLITE_SCHEMA_SQL);
+    await db.exec(renderPGLiteSchema());
   } finally {
     await engine.disconnect();
   }
