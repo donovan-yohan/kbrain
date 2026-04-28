@@ -1,0 +1,29 @@
+skills/setup/SKILL.md
+  bf3413ccb3c9286a 31
+AGENTS.md
+  bf3413ccb3c9286a 9
+INSTALL_FOR_AGENTS.md
+  bf3413ccb3c9286a 13-15,20,29,32
+docs/guides/upgrades-auto-update.md
+  bf3413ccb3c9286a 137
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "afc7df30dbdad8c33a0622aeffc388685d520cb9",
+  "prompts": {
+    "bf3413ccb3c9286a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "50be787e-ed89-4ccb-97c5-aa231dcc3f61",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 9,
+      "total_deletions": 9,
+      "accepted_lines": 9,
+      "overriden_lines": 0
+    }
+  }
+}
