@@ -3,6 +3,25 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync } fr
 import { join } from 'path';
 import { VERSION } from '../version.ts';
 
+/**
+ * Upstream repo for self-update / release checks. Defaults to this fork.
+ * Override with GBRAIN_UPGRADE_REPO=owner/repo to point at a different remote
+ * (e.g. GBRAIN_UPGRADE_REPO=garrytan/gbrain to track upstream).
+ */
+export function getUpgradeRepo(): string {
+  return process.env.GBRAIN_UPGRADE_REPO || 'donovan-yohan/kbrain';
+}
+
+/** GitHub releases page for the configured upgrade repo. */
+export function getReleasesUrl(): string {
+  return `https://github.com/${getUpgradeRepo()}/releases`;
+}
+
+/** GitHub issues page for the configured upgrade repo. */
+export function getIssuesUrl(): string {
+  return `https://github.com/${getUpgradeRepo()}/issues`;
+}
+
 export async function runUpgrade(args: string[]) {
   if (args.includes('--help') || args.includes('-h')) {
     console.log('Usage: gbrain upgrade\n\nSelf-update the CLI.\n\nDetects install method (bun, binary, clawhub) and runs the appropriate update.\nAfter upgrading, shows what\'s new and offers to set up new features.');
@@ -20,17 +39,21 @@ export async function runUpgrade(args: string[]) {
     case 'bun':
       console.log('Upgrading via bun...');
       try {
-        execSync('bun update gbrain', { stdio: 'inherit', timeout: 120_000 });
+        // Re-install from the configured remote so fork tracking works.
+        // `bun update gbrain` only refreshes registry installs; github:
+        // sources need an explicit re-install to pull a new commit.
+        const repo = getUpgradeRepo();
+        execSync(`bun install -g github:${repo}`, { stdio: 'inherit', timeout: 120_000 });
         upgraded = true;
       } catch {
-        console.error('Upgrade failed. Try running manually: bun update gbrain');
+        console.error(`Upgrade failed. Try running manually: bun install -g github:${getUpgradeRepo()}`);
       }
       break;
 
     case 'binary':
       console.log('Binary self-update not yet implemented.');
       console.log('Download the latest binary from GitHub Releases:');
-      console.log('  https://github.com/garrytan/gbrain/releases');
+      console.log(`  ${getReleasesUrl()}`);
       break;
 
     case 'clawhub':
@@ -46,9 +69,9 @@ export async function runUpgrade(args: string[]) {
     default:
       console.error('Could not detect installation method.');
       console.log('Try one of:');
-      console.log('  bun update gbrain');
+      console.log(`  bun install -g github:${getUpgradeRepo()}`);
       console.log('  clawhub update gbrain');
-      console.log('  Download from https://github.com/garrytan/gbrain/releases');
+      console.log(`  Download from ${getReleasesUrl()}`);
   }
 
   if (upgraded) {

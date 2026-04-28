@@ -1,5 +1,5 @@
 import { VERSION } from '../version.ts';
-import { detectInstallMethod } from './upgrade.ts';
+import { detectInstallMethod, getUpgradeRepo, getReleasesUrl } from './upgrade.ts';
 
 interface CheckUpdateResult {
   current_version: string;
@@ -33,16 +33,16 @@ export function isMinorOrMajorBump(current: string, latest: string): boolean {
 
 function upgradeCommandForMethod(method: string): string {
   switch (method) {
-    case 'bun': return 'bun update gbrain';
+    case 'bun': return `bun install -g github:${getUpgradeRepo()}`;
     case 'clawhub': return 'clawhub update gbrain';
-    case 'binary': return 'Download from https://github.com/garrytan/gbrain/releases';
+    case 'binary': return `Download from ${getReleasesUrl()}`;
     default: return 'gbrain upgrade';
   }
 }
 
 async function fetchLatestRelease(): Promise<{ tag: string; published_at: string; url: string } | null> {
   try {
-    const res = await fetch('https://api.github.com/repos/garrytan/gbrain/releases/latest', {
+    const res = await fetch(`https://api.github.com/repos/${getUpgradeRepo()}/releases/latest`, {
       headers: { 'User-Agent': `gbrain/${VERSION}` },
       signal: AbortSignal.timeout(10_000),
     });
@@ -60,7 +60,7 @@ async function fetchLatestRelease(): Promise<{ tag: string; published_at: string
 
 async function fetchChangelog(currentVersion: string, latestVersion: string): Promise<string> {
   try {
-    const res = await fetch('https://raw.githubusercontent.com/garrytan/gbrain/master/CHANGELOG.md', {
+    const res = await fetch(`https://raw.githubusercontent.com/${getUpgradeRepo()}/master/CHANGELOG.md`, {
       signal: AbortSignal.timeout(10_000),
     });
     if (!res.ok) return '';
