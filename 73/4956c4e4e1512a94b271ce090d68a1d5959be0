@@ -1,0 +1,27 @@
+llms-full.txt
+  a3dad7b5c03c01ff 6,12,22,90,1085,1099-1101,1106,1115,1118,1263,1375,2139,2380,3400,3545,3745,4084,4256,4394,4694,4860,4935
+scripts/llms-config.ts
+  a3dad7b5c03c01ff 32,35
+llms.txt
+  a3dad7b5c03c01ff 5,9-13,17-23,27-29,33-35,39-40,44-45
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "734956c4e4e1512a94b271ce090d68a1d5959be0",
+  "prompts": {
+    "a3dad7b5c03c01ff": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "59b24c3b-7b8b-4d98-8d36-945fa2be5028",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 9057,
+      "total_deletions": 49,
+      "accepted_lines": 9057,
+      "overriden_lines": 0
+    }
+  }
+}
