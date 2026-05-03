@@ -3,13 +3,13 @@
 > GBrain is a personal knowledge brain and GStack mod for agent platforms. Pluggable engines (PGLite default, Postgres+pgvector for scale), contract-first operations, 26 fat-markdown skills. Teaches agents brain ops, ingestion, enrichment, scheduling, identity, and access control.
 
 This file concatenates core GBrain documentation for single-fetch ingestion.
-For the link-only index, see `llms.txt`. Source of truth: https://github.com/garrytan/gbrain.
+For the link-only index, see `llms.txt`. Source of truth: https://github.com/donovan-yohan/kbrain.
 
 # Core entry points
 
 ## AGENTS.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/AGENTS.md
 
 # Agents working on GBrain
 
@@ -19,7 +19,7 @@ start here.
 
 ## Install (5 min)
 
-1. Clone: `git clone https://github.com/garrytan/gbrain ~/gbrain && cd ~/gbrain`
+1. Clone: `git clone https://github.com/donovan-yohan/kbrain ~/gbrain && cd ~/gbrain`
 2. Install: `bun install`
 3. Init the brain: `gbrain init` (defaults to PGLite, zero-config). For 1000+ files or
    multi-machine sync, init suggests Postgres + pgvector via Supabase.
@@ -87,7 +87,7 @@ publishing: `LLMS_REPO_BASE=https://raw.githubusercontent.com/your-org/your-fork
 
 ## CLAUDE.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/CLAUDE.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/CLAUDE.md
 
 # CLAUDE.md
 
@@ -1082,7 +1082,7 @@ Key routing rules:
 
 ## INSTALL_FOR_AGENTS.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/INSTALL_FOR_AGENTS.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/INSTALL_FOR_AGENTS.md
 
 # GBrain Installation Guide for AI Agents
 
@@ -1096,14 +1096,14 @@ protocol (install, read order, trust boundary, common tasks). Claude Code reads
 `CLAUDE.md` automatically and can skip ahead.
 
 If you fetched this file by URL without cloning yet, the companion files live at:
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/AGENTS.md` — start here
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms.txt` — full doc map
-- `https://raw.githubusercontent.com/garrytan/gbrain/master/llms-full.txt` — same map, inlined
+- `https://raw.githubusercontent.com/donovan-yohan/kbrain/master/AGENTS.md` — start here
+- `https://raw.githubusercontent.com/donovan-yohan/kbrain/master/llms.txt` — full doc map
+- `https://raw.githubusercontent.com/donovan-yohan/kbrain/master/llms-full.txt` — same map, inlined
 
 ## Step 1: Install GBrain
 
 ```bash
-git clone https://github.com/garrytan/gbrain.git ~/gbrain && cd ~/gbrain
+git clone https://github.com/donovan-yohan/kbrain.git ~/gbrain && cd ~/gbrain
 curl -fsSL https://bun.sh/install | bash
 export PATH="$HOME/.bun/bin:$PATH"
 bun install && bun link
@@ -1112,10 +1112,10 @@ bun install && bun link
 Verify: `gbrain --version` should print a version number. If `gbrain` is not found,
 restart the shell or add the PATH export to the shell profile.
 
-> **Do NOT use `bun install -g github:garrytan/gbrain`.** Bun blocks the top-level
+> **Do NOT use `bun install -g github:donovan-yohan/kbrain`.** Bun blocks the top-level
 > postinstall hook on global installs, so schema migrations never run and the CLI
 > aborts with `Aborted()` when it opens PGLite. Use the `git clone + bun link` path
-> above. Tracking issue: [#218](https://github.com/garrytan/gbrain/issues/218).
+> above. Upstream tracking issue: [garrytan/gbrain#218](https://github.com/garrytan/gbrain/issues/218).
 
 ## Step 2: API Keys
 
@@ -1260,7 +1260,7 @@ columns. PGLite brains no-op. If wiki-style imports were truncated by the old
 
 ## skills/RESOLVER.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/skills/RESOLVER.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/skills/RESOLVER.md
 
 # GBrain Skill Resolver
 
@@ -1372,7 +1372,7 @@ These apply to ALL brain-writing skills:
 
 ## README.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/README.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/README.md
 
 # GBrain
 
@@ -2136,7 +2136,7 @@ MIT
 
 ## docs/ENGINES.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/ENGINES.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/ENGINES.md
 
 # Pluggable Engine Architecture
 
@@ -2377,7 +2377,7 @@ Note: The original SQLite engine plan (`docs/SQLITE_ENGINE.md`) was superseded b
 
 ## docs/GBRAIN_RECOMMENDED_SCHEMA.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md
 
 <!-- schema-version: 0.5.0 -->
 <!-- source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_RECOMMENDED_SCHEMA.md -->
@@ -3397,7 +3397,7 @@ The human's job: curate sources, direct analysis, ask good questions, and think 
 
 ## docs/guides/live-sync.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/live-sync.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/guides/live-sync.md
 
 # Live Sync: Keep the Index Current
 
@@ -3542,7 +3542,7 @@ hashes match. If both a cron and `--watch` fire simultaneously, no conflict.
 
 ## docs/guides/cron-schedule.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/cron-schedule.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/guides/cron-schedule.md
 
 # Reference Cron Schedule
 
@@ -3742,7 +3742,7 @@ echo "Dream cycle complete at $(date)"
 
 ## docs/guides/minions-deployment.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-deployment.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/guides/minions-deployment.md
 
 # Minions Worker Deployment Guide
 
@@ -4081,7 +4081,7 @@ sudo systemctl daemon-reload
 
 ## docs/guides/quiet-hours.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/quiet-hours.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/guides/quiet-hours.md
 
 # Quiet Hours and Timezone-Aware Delivery
 
@@ -4253,7 +4253,7 @@ Set `enabled: false` to disable quiet hours entirely (e.g., for 24/7 monitoring)
 
 ## docs/mcp/DEPLOY.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/mcp/DEPLOY.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/mcp/DEPLOY.md
 
 # Deploy GBrain Remote MCP Server
 
@@ -4391,7 +4391,7 @@ for a reference implementation.
 
 ## docs/GBRAIN_VERIFY.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/GBRAIN_VERIFY.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/GBRAIN_VERIFY.md
 
 # GBrain Installation Verification Runbook
 
@@ -4691,7 +4691,7 @@ end-to-end sync test (4c), push a real change and verify it appears in search.
 
 ## docs/guides/minions-fix.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/guides/minions-fix.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/guides/minions-fix.md
 
 # Minions fix — repairing a half-migrated install
 
@@ -4857,7 +4857,7 @@ Each phase is idempotent. Re-running is safe. Common failure modes:
 
 ## docs/integrations/reliability-repair.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/integrations/reliability-repair.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/integrations/reliability-repair.md
 
 # Reliability repair (v0.12.2)
 
@@ -4932,7 +4932,7 @@ should match your expectations for the corpus.
 
 ## docs/UPGRADING_DOWNSTREAM_AGENTS.md
 
-Source: https://raw.githubusercontent.com/garrytan/gbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md
+Source: https://raw.githubusercontent.com/donovan-yohan/kbrain/master/docs/UPGRADING_DOWNSTREAM_AGENTS.md
 
 # Upgrading Downstream Agents
 
