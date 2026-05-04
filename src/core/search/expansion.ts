@@ -45,12 +45,19 @@ function getAnthropicClient(): Anthropic {
 function getOpenAIClient(): { client: OpenAI; model: string } {
   const cfg = loadConfig();
   const baseURL = cfg?.expansion_base_url || process.env.EXPANSION_BASE_URL;
-  const apiKey = cfg?.expansion_api_key || process.env.EXPANSION_API_KEY || 'sk-local';
+  const apiKey = cfg?.expansion_api_key || process.env.EXPANSION_API_KEY || process.env.OPENCODE_GO_API_KEY || 'sk-local';
   const model = cfg?.expansion_model || process.env.EXPANSION_MODEL || 'gpt-4o-mini';
+  const shouldSendXApiKey = !!(
+    cfg?.expansion_api_key
+    || process.env.EXPANSION_API_KEY
+    || process.env.OPENCODE_GO_API_KEY
+    || baseURL?.includes('opencode.ai')
+  );
   if (!openaiClient) {
     openaiClient = new OpenAI({
       apiKey,
       ...(baseURL ? { baseURL } : {}),
+      ...(shouldSendXApiKey ? { defaultHeaders: { 'x-api-key': apiKey } } : {}),
     });
   }
   return { client: openaiClient, model };
