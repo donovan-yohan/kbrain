@@ -230,7 +230,10 @@ if [ "$DRY_RUN" = "true" ]; then
   pass "kbrain CLI build/link would run"
 else
   bun install --frozen-lockfile 2>&1 | tail -5
-  bun run build 2>&1 | tail -10 || warn "build script may not be defined; falling back to bun link"
+  if ! bun run build 2>&1 | tail -10; then
+    if grep -q '"build":' package.json; then fail "bun run build failed" 5; fi
+    warn "build script may not be defined; falling back to bun link"
+  fi
   bun link
 
   if ! command -v gbrain >/dev/null 2>&1; then
@@ -320,10 +323,10 @@ Active config:
   Embedding model:  ${EMBEDDING_MODEL} @ ${EMBEDDING_BASE_URL}
 
 Source the env in your shell rc to make this permanent:
-  echo "set -a; . $REPO_ROOT/.env; set +a" >> ~/.zshrc
+  printf 'set -a; . %q; set +a\n' "$REPO_ROOT/.env" >> ~/.zshrc
 
 Try it:
-  gbrain put_page --title "Hello" --tags "test" <<<"first page"
+  echo "first page" | gbrain put hello --tag test
   gbrain query "hello"
 
 Next steps:

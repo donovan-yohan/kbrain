@@ -144,10 +144,10 @@ After installing on Mac B with the same shared Postgres/Ollama values:
 
 ```bash
 # On Mac A
-gbrain put_page --title "Test from Mac A" --tags "sync-test" <<<"hello from A"
+echo "hello from A" | gbrain put sync-test --tag sync-test
 
 # On Mac B
-gbrain query "Test from Mac A"
+gbrain query "hello from A"
 ```
 
 Mac B should return the page Mac A wrote. Vector search works across both

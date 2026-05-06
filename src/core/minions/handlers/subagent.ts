@@ -152,10 +152,19 @@ export function makeSubagentHandler(deps: SubagentDeps) {
     : null;
   const makeOpenAI = deps.makeOpenAI ?? (() => {
     const apiKey = process.env.GBRAIN_SUBAGENT_API_KEY || process.env.OPENCODE_GO_API_KEY || process.env.OPENAI_API_KEY || 'sk-local';
+    const baseURL = process.env.GBRAIN_SUBAGENT_BASE_URL;
+    // Mirror expansion.ts: send x-api-key when an OpenCode-Go-style key is in
+    // env OR when the baseURL points at opencode.ai (covers config-only setups
+    // where the key arrives via OPENAI_API_KEY).
+    const shouldSendXApiKey = !!(
+      process.env.GBRAIN_SUBAGENT_API_KEY
+      || process.env.OPENCODE_GO_API_KEY
+      || baseURL?.includes('opencode.ai')
+    );
     return new OpenAI({
       apiKey,
-      ...(process.env.GBRAIN_SUBAGENT_BASE_URL ? { baseURL: process.env.GBRAIN_SUBAGENT_BASE_URL } : {}),
-      ...(process.env.GBRAIN_SUBAGENT_API_KEY || process.env.OPENCODE_GO_API_KEY ? { defaultHeaders: { 'x-api-key': apiKey } } : {}),
+      ...(baseURL ? { baseURL } : {}),
+      ...(shouldSendXApiKey ? { defaultHeaders: { 'x-api-key': apiKey } } : {}),
     });
   });
   const openaiClient: OpenAIChatCompletionsClient | null = provider === 'openai-compat'
@@ -745,9 +754,30 @@ function toOpenAIChatParams(params: Anthropic.MessageCreateParamsNonStreaming): 
     max_tokens: params.max_tokens,
     messages,
     ...(params.tools && params.tools.length > 0
-      ? { tools: params.tools.map(toolToOpenAI), tool_choice: 'auto' }
+      ? { tools: params.tools.map(toolToOpenAI), tool_choice: anthropicToolChoiceToOpenAI(params.tool_choice) }
       : {}),
   };
+}
+
+// Map Anthropic tool_choice → OpenAI tool_choice. Anthropic shapes:
+//   { type: 'auto' }    → 'auto'           (model decides; default)
+//   { type: 'any' }     → 'required'       (must call some tool)
+//   { type: 'tool', name: 'X' }
+//                       → { type: 'function', function: { name: 'X' } }
+//   { type: 'none' }    → 'none'           (no tool calls)
+//   undefined           → 'auto'           (Anthropic default)
+function anthropicToolChoiceToOpenAI(
+  tc: Anthropic.MessageCreateParamsNonStreaming['tool_choice'],
+): unknown {
+  if (!tc) return 'auto';
+  const t = (tc as { type?: string }).type;
+  if (t === 'any') return 'required';
+  if (t === 'none') return 'none';
+  if (t === 'tool') {
+    const name = (tc as { name?: string }).name;
+    if (name) return { type: 'function', function: { name } };
+  }
+  return 'auto';
 }
 
 function anthropicSystemToText(system: Anthropic.MessageCreateParamsNonStreaming['system']): string {
@@ -839,7 +869,7 @@ function fromOpenAIChatCompletion(response: Record<string, unknown>, model: stri
     type: 'message',
     role: 'assistant',
     model: String(response.model ?? model),
-    stop_reason: blocks.some((b: any) => b.type === 'tool_use') ? 'tool_use' : 'end_turn',
+    stop_reason: openAIFinishReasonToAnthropic(choice.finish_reason, blocks),
     stop_sequence: null,
     content: blocks as Anthropic.Message['content'],
     usage: {
@@ -858,6 +888,23 @@ function parseToolArguments(args: unknown): unknown {
   } catch {
     return { raw: args };
   }
+}
+
+// Map OpenAI finish_reason → Anthropic stop_reason. Falls back to a tool/text
+// heuristic only when the upstream reason is missing or unrecognized so that
+// downstream loop control (max-turn budget, tool dispatch) reflects the real
+// provider verdict.
+function openAIFinishReasonToAnthropic(
+  finishReason: unknown,
+  blocks: ContentBlock[],
+): Anthropic.Message['stop_reason'] {
+  switch (finishReason) {
+    case 'tool_calls':     return 'tool_use';
+    case 'stop':           return 'end_turn';
+    case 'length':         return 'max_tokens';
+    case 'content_filter': return 'end_turn';
+  }
+  return blocks.some((b: any) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';
 }
 
 // ── Internal: helpers ───────────────────────────────────────
