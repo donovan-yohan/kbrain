@@ -716,6 +716,32 @@ than master's VERSION. If a queue collision claims your version on
 master before yours lands, /ship's queue-aware allocator (Step 12)
 will detect drift and re-bump on the next run.
 
+## Tagging master on every release (kbrain fork)
+
+Upstream gbrain doesn't publish git tags. The kbrain fork does, because the
+sibling gstack fork pins to kbrain by tag. Every commit that lands on master
+with a new VERSION must get an annotated tag named `vX.Y.Z` (matching the
+contents of `VERSION` exactly, with the leading `v`).
+
+**On every PR merge to master that bumps VERSION**:
+
+```bash
+git fetch origin master
+NEW_VERSION="$(git show origin/master:VERSION)"
+git tag -a "v${NEW_VERSION}" "$(git rev-parse origin/master)" \
+  -m "v${NEW_VERSION} — <one-line release summary>"
+git push origin "v${NEW_VERSION}"
+```
+
+**On retroactive backfill** (the situation we hit during the v0.27 sync —
+master sat at 0.26.2 with no tag), tag the existing master commit at the
+last shipped version before merging the new sync PR. After the sync PR
+merges, tag master again at the new version.
+
+The `/ship` workflow should treat tag-publish as a mandatory post-merge step
+alongside `/document-release`. A merged release without a pushed tag is an
+incomplete ship.
+
 ## Pre-ship requirements
 
 Before shipping (/ship) or reviewing (/review), always run the full test suite.
