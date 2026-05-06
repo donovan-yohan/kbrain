@@ -70,6 +70,28 @@ class FakeMessagesClient implements MessagesClient {
   }
 }
 
+type FakeOpenAIResponse = {
+  message: Record<string, unknown>;
+  finish_reason?: string;
+  usage?: Record<string, number>;
+};
+
+class FakeOpenAIChatClient {
+  public calls: any[] = [];
+  constructor(private responses: FakeOpenAIResponse[]) {}
+  async create(params: any): Promise<any> {
+    this.calls.push(params);
+    if (this.responses.length === 0) throw new Error('FakeOpenAIChatClient: out of scripted responses');
+    const r = this.responses.shift()!;
+    return {
+      id: `chatcmpl_${this.calls.length}`,
+      model: params.model,
+      choices: [{ index: 0, message: r.message, finish_reason: r.finish_reason ?? 'stop' }],
+      usage: r.usage ?? { prompt_tokens: 11, completion_tokens: 7 },
+    };
+  }
+}
+
 // Build a synthetic MinionJobContext around a real minion_jobs row. The
 // handler only reads data/id/signal/shutdownSignal/updateTokens — we stub
 // the rest. `subagent` is a protected job name (Lane 4H) so tests submit
@@ -418,6 +440,98 @@ describe('subagent handler input validation', () => {
     const handler = makeSubagentHandler({ engine, client, toolRegistry: [tool] });
     const ctx = await makeCtx({ prompt: 'x', allowed_tools: ['real', 'ghost_tool'] });
     await expect(handler(ctx)).rejects.toThrow(/unknown tool/);
+  });
+});
+
+describe('subagent handler OpenAI-compatible provider', () => {
+  test('no-tool response maps OpenAI chat completion text into persisted subagent result', async () => {
+    const openaiClient = new FakeOpenAIChatClient([
+      { message: { role: 'assistant', content: 'hello from openai' } },
+    ]);
+    const handler = makeSubagentHandler({
+      engine,
+      provider: 'openai-compat',
+      openaiClient,
+      toolRegistry: [],
+    });
+    const ctx = await makeCtx({ prompt: 'hi', model: 'kimi-k2.6' });
+
+    const result = await handler(ctx);
+
+    expect(result.result).toBe('hello from openai');
+    expect(result.stop_reason).toBe('end_turn');
+    expect(result.tokens.in).toBe(11);
+    expect(result.tokens.out).toBe(7);
+    expect(openaiClient.calls.length).toBe(1);
+    expect(openaiClient.calls[0]!.model).toBe('kimi-k2.6');
+    expect(openaiClient.calls[0]!.messages[0]).toMatchObject({ role: 'system' });
+    expect(openaiClient.calls[0]!.messages[1]).toMatchObject({ role: 'user', content: 'hi' });
+  });
+
+  test('uses GBRAIN_SUBAGENT_MODEL as the OpenAI-compatible default when job data omits model', async () => {
+    const prior = process.env.GBRAIN_SUBAGENT_MODEL;
+    process.env.GBRAIN_SUBAGENT_MODEL = 'kimi-k2.6';
+    try {
+      const openaiClient = new FakeOpenAIChatClient([
+        { message: { role: 'assistant', content: 'env model ok' } },
+      ]);
+      const handler = makeSubagentHandler({
+        engine,
+        provider: 'openai-compat',
+        openaiClient,
+        toolRegistry: [],
+      });
+      const ctx = await makeCtx({ prompt: 'hi' });
+
+      const result = await handler(ctx);
+
+      expect(result.result).toBe('env model ok');
+      expect(openaiClient.calls[0]!.model).toBe('kimi-k2.6');
+    } finally {
+      if (prior === undefined) delete process.env.GBRAIN_SUBAGENT_MODEL;
+      else process.env.GBRAIN_SUBAGENT_MODEL = prior;
+    }
+  });
+
+  test('tool call response maps OpenAI function tool calls into Anthropic-style replay rows', async () => {
+    const tool = makeEchoTool();
+    const openaiClient = new FakeOpenAIChatClient([
+      {
+        finish_reason: 'tool_calls',
+        message: {
+          role: 'assistant',
+          content: null,
+          tool_calls: [
+            {
+              id: 'call_1',
+              type: 'function',
+              function: { name: 'echo', arguments: JSON.stringify({ value: 'v1' }) },
+            },
+          ],
+        },
+      },
+      { message: { role: 'assistant', content: 'done' } },
+    ]);
+    const handler = makeSubagentHandler({
+      engine,
+      provider: 'openai-compat',
+      openaiClient,
+      toolRegistry: [tool],
+    });
+    const ctx = await makeCtx({ prompt: 'go', model: 'kimi-k2.6' });
+
+    const result = await handler(ctx);
+
+    expect(result.result).toBe('done');
+    expect(openaiClient.calls.length).toBe(2);
+    expect(openaiClient.calls[0]!.tools[0]).toMatchObject({ type: 'function', function: { name: 'echo' } });
+    expect(openaiClient.calls[1]!.messages.some((m: any) => m.role === 'tool' && m.tool_call_id === 'call_1')).toBe(true);
+
+    const rows = await engine.executeRaw<{ status: string; output: unknown }>(
+      `SELECT status, output FROM subagent_tool_executions WHERE job_id = $1`,
+      [ctx.id],
+    );
+    expect(rows[0]!.status).toBe('complete');
   });
 });
 

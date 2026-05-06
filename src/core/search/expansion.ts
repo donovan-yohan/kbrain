@@ -32,6 +32,9 @@ const MAX_QUERY_CHARS = 500;
 
 let anthropicClient: Anthropic | null = null;
 let openaiClient: OpenAI | null = null;
+let cachedOpenAIBaseURL: string | undefined;
+let cachedOpenAIApiKey: string | undefined;
+let cachedOpenAIXApiKey: boolean | undefined;
 
 function getAnthropicClient(): Anthropic {
   if (!anthropicClient) {
@@ -45,13 +48,32 @@ function getAnthropicClient(): Anthropic {
 function getOpenAIClient(): { client: OpenAI; model: string } {
   const cfg = loadConfig();
   const baseURL = cfg?.expansion_base_url || process.env.EXPANSION_BASE_URL;
-  const apiKey = cfg?.expansion_api_key || process.env.EXPANSION_API_KEY || 'sk-local';
+  const apiKey = cfg?.expansion_api_key || process.env.EXPANSION_API_KEY || process.env.OPENCODE_GO_API_KEY || 'sk-local';
   const model = cfg?.expansion_model || process.env.EXPANSION_MODEL || 'gpt-4o-mini';
-  if (!openaiClient) {
+  const shouldSendXApiKey = !!(
+    cfg?.expansion_api_key
+    || process.env.EXPANSION_API_KEY
+    || process.env.OPENCODE_GO_API_KEY
+    || baseURL?.includes('opencode.ai')
+  );
+  // Recreate client when any input that affects construction changes — long-
+  // lived processes (MCP server) can see env/config flip at runtime, and a
+  // memoized client locks in the wrong baseURL or auth header otherwise.
+  // Mirrors the cache-invalidation pattern in src/core/embedding.ts.
+  if (
+    !openaiClient
+    || cachedOpenAIBaseURL !== baseURL
+    || cachedOpenAIApiKey !== apiKey
+    || cachedOpenAIXApiKey !== shouldSendXApiKey
+  ) {
     openaiClient = new OpenAI({
       apiKey,
       ...(baseURL ? { baseURL } : {}),
+      ...(shouldSendXApiKey ? { defaultHeaders: { 'x-api-key': apiKey } } : {}),
     });
+    cachedOpenAIBaseURL = baseURL;
+    cachedOpenAIApiKey = apiKey;
+    cachedOpenAIXApiKey = shouldSendXApiKey;
   }
   return { client: openaiClient, model };
 }
@@ -230,4 +252,7 @@ async function callOpenAICompatForExpansion(query: string): Promise<string[]> {
 export function resetExpansionClients(): void {
   anthropicClient = null;
   openaiClient = null;
+  cachedOpenAIBaseURL = undefined;
+  cachedOpenAIApiKey = undefined;
+  cachedOpenAIXApiKey = undefined;
 }

@@ -25,6 +25,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import OpenAI from 'openai';
 import type { MinionJobContext, MinionJob } from '../types.ts';
 import type {
   ContentBlock,
@@ -66,11 +67,21 @@ export interface MessagesClient {
   create(params: Anthropic.MessageCreateParamsNonStreaming, opts?: { signal?: AbortSignal }): Promise<Anthropic.Message>;
 }
 
+export type SubagentProvider = 'anthropic' | 'openai-compat';
+
+export interface OpenAIChatCompletionsClient {
+  create(params: Record<string, unknown>, opts?: { signal?: AbortSignal }): Promise<Record<string, unknown>>;
+}
+
 export interface SubagentDeps {
   /** Engine for DB-backed ops (tools + message persistence + rate leases). */
   engine: BrainEngine;
   /** Anthropic client. Defaults to the SDK-constructed client. */
   client?: MessagesClient;
+  /** OpenAI-compatible chat.completions client. Used when provider=openai-compat. */
+  openaiClient?: OpenAIChatCompletionsClient;
+  /** Provider for outbound subagent LLM calls. Defaults to GBRAIN_SUBAGENT_PROVIDER or anthropic. */
+  provider?: SubagentProvider;
   /**
    * Anthropic SDK constructor. Defaults to `() => new Anthropic()`.
    * Overridable in tests so the factory default-client branch is
@@ -78,6 +89,8 @@ export interface SubagentDeps {
    * When `deps.client` is provided, this is unused.
    */
   makeAnthropic?: () => Anthropic;
+  /** OpenAI SDK constructor for provider=openai-compat. */
+  makeOpenAI?: () => OpenAI;
   /** Config (MCP, brain, etc.). Defaults to loadConfig(). */
   config?: GBrainConfig;
   /** Rate-lease key. Defaults to `anthropic:messages`. */
@@ -131,10 +144,33 @@ export function makeSubagentHandler(deps: SubagentDeps) {
   // lives at sdk.messages.create. Assigning sdk.messages directly gets the
   // right object; JS method-call semantics preserve `this` at the call
   // site (subagent.ts invokes client.create(...) with client === sdk.messages).
-  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic());
-  const client: MessagesClient = deps.client ?? makeAnthropic().messages;
   const config = deps.config ?? loadConfig() ?? ({ engine: 'postgres' } as GBrainConfig);
-  const rateLeaseKey = deps.rateLeaseKey ?? DEFAULT_RATE_KEY;
+  const provider = resolveSubagentProvider(deps.provider, config);
+  const makeAnthropic = deps.makeAnthropic ?? (() => new Anthropic());
+  const anthropicClient: MessagesClient | null = provider === 'anthropic'
+    ? (deps.client ?? makeAnthropic().messages)
+    : null;
+  const makeOpenAI = deps.makeOpenAI ?? (() => {
+    const apiKey = process.env.GBRAIN_SUBAGENT_API_KEY || process.env.OPENCODE_GO_API_KEY || process.env.OPENAI_API_KEY || 'sk-local';
+    const baseURL = process.env.GBRAIN_SUBAGENT_BASE_URL;
+    // Mirror expansion.ts: send x-api-key when an OpenCode-Go-style key is in
+    // env OR when the baseURL points at opencode.ai (covers config-only setups
+    // where the key arrives via OPENAI_API_KEY).
+    const shouldSendXApiKey = !!(
+      process.env.GBRAIN_SUBAGENT_API_KEY
+      || process.env.OPENCODE_GO_API_KEY
+      || baseURL?.includes('opencode.ai')
+    );
+    return new OpenAI({
+      apiKey,
+      ...(baseURL ? { baseURL } : {}),
+      ...(shouldSendXApiKey ? { defaultHeaders: { 'x-api-key': apiKey } } : {}),
+    });
+  });
+  const openaiClient: OpenAIChatCompletionsClient | null = provider === 'openai-compat'
+    ? (deps.openaiClient ?? (makeOpenAI().chat.completions as unknown as OpenAIChatCompletionsClient))
+    : null;
+  const rateLeaseKey = deps.rateLeaseKey ?? (provider === 'openai-compat' ? 'openai-compatible:chat' : DEFAULT_RATE_KEY);
   const maxConcurrent = deps.maxConcurrent ?? DEFAULT_MAX_CONCURRENT;
   const leaseTtlMs = deps.leaseTtlMs ?? DEFAULT_LEASE_TTL_MS;
 
@@ -144,7 +180,7 @@ export function makeSubagentHandler(deps: SubagentDeps) {
       throw new Error('subagent job data.prompt is required (string)');
     }
 
-    const model = data.model ?? DEFAULT_MODEL;
+    const model = data.model ?? resolveDefaultSubagentModel(provider, config);
     const maxTurns = data.max_turns ?? DEFAULT_MAX_TURNS;
     const systemPrompt = data.system ?? DEFAULT_SYSTEM;
 
@@ -348,7 +384,13 @@ export function makeSubagentHandler(deps: SubagentDeps) {
         };
 
         const combinedSignal = mergeSignals(ctx.signal, ctx.shutdownSignal);
-        assistantMsg = await client.create(params, { signal: combinedSignal });
+        assistantMsg = await createSubagentMessage({
+          provider,
+          anthropicClient,
+          openaiClient,
+          params,
+          signal: combinedSignal,
+        });
       } catch (err) {
         // Release lease eagerly on error so we don't starve capacity.
         await releaseLease(engine, lease.leaseId!).catch(() => {});
@@ -660,6 +702,209 @@ async function persistToolExecFailed(
        SET status = 'failed', error = EXCLUDED.error, ended_at = now()`,
     [jobId, messageIdx, toolUseId, toolName, JSON.stringify(input), error],
   );
+}
+
+// ── Internal: provider adapters ──────────────────────────────
+
+function resolveSubagentProvider(explicit: SubagentProvider | undefined, config: GBrainConfig): SubagentProvider {
+  if (explicit) return explicit;
+  const env = process.env.GBRAIN_SUBAGENT_PROVIDER;
+  if (env === 'anthropic' || env === 'openai-compat') return env;
+  const cfgProvider = (config as unknown as { subagent_provider?: string }).subagent_provider;
+  if (cfgProvider === 'anthropic' || cfgProvider === 'openai-compat') return cfgProvider;
+  return 'anthropic';
+}
+
+function resolveDefaultSubagentModel(provider: SubagentProvider, config: GBrainConfig): string {
+  if (provider === 'openai-compat') {
+    const cfgModel = (config as unknown as { subagent_model?: string }).subagent_model;
+    return process.env.GBRAIN_SUBAGENT_MODEL || cfgModel || 'gpt-4o-mini';
+  }
+  return DEFAULT_MODEL;
+}
+
+async function createSubagentMessage(opts: {
+  provider: SubagentProvider;
+  anthropicClient: MessagesClient | null;
+  openaiClient: OpenAIChatCompletionsClient | null;
+  params: Anthropic.MessageCreateParamsNonStreaming;
+  signal: AbortSignal;
+}): Promise<Anthropic.Message> {
+  if (opts.provider === 'anthropic') {
+    if (!opts.anthropicClient) throw new Error('anthropic subagent provider selected but no Anthropic client is configured');
+    return opts.anthropicClient.create(opts.params, { signal: opts.signal });
+  }
+
+  if (!opts.openaiClient) throw new Error('openai-compatible subagent provider selected but no chat client is configured');
+  const response = await opts.openaiClient.create(toOpenAIChatParams(opts.params), { signal: opts.signal });
+  return fromOpenAIChatCompletion(response, opts.params.model);
+}
+
+function toOpenAIChatParams(params: Anthropic.MessageCreateParamsNonStreaming): Record<string, unknown> {
+  const messages: Record<string, unknown>[] = [];
+  const systemText = anthropicSystemToText(params.system);
+  if (systemText) messages.push({ role: 'system', content: systemText });
+
+  for (const msg of params.messages) {
+    messages.push(...anthropicMessageToOpenAI(msg as Anthropic.MessageParam));
+  }
+
+  return {
+    model: params.model,
+    max_tokens: params.max_tokens,
+    messages,
+    ...(params.tools && params.tools.length > 0
+      ? { tools: params.tools.map(toolToOpenAI), tool_choice: anthropicToolChoiceToOpenAI(params.tool_choice) }
+      : {}),
+  };
+}
+
+// Map Anthropic tool_choice → OpenAI tool_choice. Anthropic shapes:
+//   { type: 'auto' }    → 'auto'           (model decides; default)
+//   { type: 'any' }     → 'required'       (must call some tool)
+//   { type: 'tool', name: 'X' }
+//                       → { type: 'function', function: { name: 'X' } }
+//   { type: 'none' }    → 'none'           (no tool calls)
+//   undefined           → 'auto'           (Anthropic default)
+function anthropicToolChoiceToOpenAI(
+  tc: Anthropic.MessageCreateParamsNonStreaming['tool_choice'],
+): unknown {
+  if (!tc) return 'auto';
+  const t = (tc as { type?: string }).type;
+  if (t === 'any') return 'required';
+  if (t === 'none') return 'none';
+  if (t === 'tool') {
+    const name = (tc as { name?: string }).name;
+    if (name) return { type: 'function', function: { name } };
+  }
+  return 'auto';
+}
+
+function anthropicSystemToText(system: Anthropic.MessageCreateParamsNonStreaming['system']): string {
+  if (!system) return '';
+  if (typeof system === 'string') return system;
+  if (Array.isArray(system)) {
+    return system
+      .map((block: any) => block?.type === 'text' && typeof block.text === 'string' ? block.text : '')
+      .filter(Boolean)
+      .join('\n');
+  }
+  return String(system);
+}
+
+function anthropicMessageToOpenAI(msg: Anthropic.MessageParam): Record<string, unknown>[] {
+  const content = msg.content as any;
+  if (typeof content === 'string') return [{ role: msg.role, content }];
+  if (!Array.isArray(content)) return [{ role: msg.role, content: asStringIfNotObject(content) }];
+
+  if (msg.role === 'user') {
+    const out: Record<string, unknown>[] = [];
+    const text = content
+      .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
+      .map((b: any) => b.text)
+      .join('\n');
+    if (text) out.push({ role: 'user', content: text });
+    for (const block of content) {
+      if (block?.type === 'tool_result') {
+        out.push({
+          role: 'tool',
+          tool_call_id: block.tool_use_id,
+          content: asStringIfNotObject(block.content ?? ''),
+        });
+      }
+    }
+    return out.length > 0 ? out : [{ role: 'user', content: '' }];
+  }
+
+  const text = content
+    .filter((b: any) => b?.type === 'text' && typeof b.text === 'string')
+    .map((b: any) => b.text)
+    .join('\n');
+  const toolCalls = content
+    .filter((b: any) => b?.type === 'tool_use')
+    .map((b: any) => ({
+      id: b.id,
+      type: 'function',
+      function: { name: b.name, arguments: asStringIfNotObject(b.input ?? {}) },
+    }));
+  return [{
+    role: 'assistant',
+    content: text || null,
+    ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
+  }];
+}
+
+function toolToOpenAI(tool: any): Record<string, unknown> {
+  return {
+    type: 'function',
+    function: {
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.input_schema,
+    },
+  };
+}
+
+function fromOpenAIChatCompletion(response: Record<string, unknown>, model: string): Anthropic.Message {
+  const choices = response.choices as any[] | undefined;
+  const choice = choices?.[0] ?? {};
+  const message = choice.message ?? {};
+  const blocks: ContentBlock[] = [];
+
+  if (typeof message.content === 'string' && message.content.length > 0) {
+    blocks.push({ type: 'text', text: message.content } as ContentBlock);
+  }
+  for (const call of message.tool_calls ?? []) {
+    blocks.push({
+      type: 'tool_use',
+      id: call.id,
+      name: call.function?.name,
+      input: parseToolArguments(call.function?.arguments),
+    } as ContentBlock);
+  }
+
+  const usage = (response.usage ?? {}) as Record<string, number>;
+  return {
+    id: String(response.id ?? 'chatcmpl_openai_compat'),
+    type: 'message',
+    role: 'assistant',
+    model: String(response.model ?? model),
+    stop_reason: openAIFinishReasonToAnthropic(choice.finish_reason, blocks),
+    stop_sequence: null,
+    content: blocks as Anthropic.Message['content'],
+    usage: {
+      input_tokens: usage.prompt_tokens ?? 0,
+      output_tokens: usage.completion_tokens ?? 0,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    } as any,
+  } as Anthropic.Message;
+}
+
+function parseToolArguments(args: unknown): unknown {
+  if (typeof args !== 'string') return args ?? {};
+  try {
+    return JSON.parse(args);
+  } catch {
+    return { raw: args };
+  }
+}
+
+// Map OpenAI finish_reason → Anthropic stop_reason. Falls back to a tool/text
+// heuristic only when the upstream reason is missing or unrecognized so that
+// downstream loop control (max-turn budget, tool dispatch) reflects the real
+// provider verdict.
+function openAIFinishReasonToAnthropic(
+  finishReason: unknown,
+  blocks: ContentBlock[],
+): Anthropic.Message['stop_reason'] {
+  switch (finishReason) {
+    case 'tool_calls':     return 'tool_use';
+    case 'stop':           return 'end_turn';
+    case 'length':         return 'max_tokens';
+    case 'content_filter': return 'end_turn';
+  }
+  return blocks.some((b: any) => b.type === 'tool_use') ? 'tool_use' : 'end_turn';
 }
 
 // ── Internal: helpers ───────────────────────────────────────
