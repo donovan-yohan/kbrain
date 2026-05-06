@@ -19,7 +19,7 @@ for (const op of operations) {
 }
 
 // CLI-only commands that bypass the operation layer
-const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror']);
+const CLI_ONLY = new Set(['init', 'upgrade', 'post-upgrade', 'check-update', 'integrations', 'publish', 'check-backlinks', 'lint', 'report', 'import', 'export', 'files', 'embed', 'serve', 'call', 'config', 'doctor', 'migrate', 'eval', 'sync', 'extract', 'features', 'autopilot', 'graph-query', 'jobs', 'agent', 'apply-migrations', 'skillpack-check', 'skillpack', 'resolvers', 'integrity', 'repair-jsonb', 'orphans', 'sources', 'mounts', 'dream', 'check-resolvable', 'routing-eval', 'skillify', 'smoke-test', 'providers', 'storage', 'repos', 'code-def', 'code-refs', 'reindex-code', 'code-callers', 'code-callees', 'frontmatter', 'auth', 'friction', 'claw-test', 'book-mirror']);
 
 async function main() {
   // Parse global flags (--quiet / --progress-json / --progress-interval)
@@ -290,6 +290,12 @@ async function handleCliOnly(command: string, args: string[]) {
     await runIntegrations(args);
     return;
   }
+  if (command === 'providers') {
+    const { runProviders } = await import('./commands/providers.ts');
+    const [sub, ...rest] = args;
+    await runProviders(sub, rest);
+    return;
+  }
   if (command === 'auth') {
     const { runAuth } = await import('./commands/auth.ts');
     await runAuth(args);
@@ -555,6 +561,12 @@ async function handleCliOnly(command: string, args: string[]) {
         await runSources(engine, args);
         break;
       }
+      case 'pages': {
+        // v0.26.5: page-level operator commands (purge-deleted escape hatch).
+        const { runPages } = await import('./commands/pages.ts');
+        await runPages(engine, args);
+        break;
+      }
       case 'storage': {
         const { runStorage } = await import('./commands/storage.ts');
         await runStorage(engine, args);
@@ -614,6 +626,20 @@ async function connectEngine(): Promise<BrainEngine> {
     console.error('No brain configured. Run: gbrain init');
     process.exit(1);
   }
+
+  // Configure the AI gateway BEFORE engine connect — initSchema needs embedding dims.
+  // Env is read once here; the gateway never reads process.env at call time (Codex C3).
+  const { configureGateway } = await import('./core/ai/gateway.ts');
+  configureGateway({
+    embedding_model: config.embedding_model,
+    embedding_dimensions: config.embedding_dimensions,
+    expansion_model: config.expansion_model,
+    chat_model: config.chat_model,
+    chat_fallback_chain: config.chat_fallback_chain,
+    base_urls: config.provider_base_urls,
+    env: { ...process.env },
+  });
+
   const { createEngine } = await import('./core/engine-factory.ts');
   const engine = await createEngine(toEngineConfig(config));
   const noRetry = process.argv.includes('--no-retry-connect') ||
