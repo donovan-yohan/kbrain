@@ -1,0 +1,23 @@
+CLAUDE.md
+  9a09172e52e8ec89 719-744
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "daebbb4100b75270f3cf1729cd6f47b1dd6e4063",
+  "prompts": {
+    "9a09172e52e8ec89": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4df1f2c2-bd94-4977-a9cb-380e79576869",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 26,
+      "total_deletions": 0,
+      "accepted_lines": 12211,
+      "overriden_lines": 0
+    }
+  }
+}
