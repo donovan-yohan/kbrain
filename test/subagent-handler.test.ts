@@ -22,6 +22,7 @@ import {
 } from '../src/core/minions/handlers/subagent.ts';
 import type { ToolDef, MinionJobContext } from '../src/core/minions/types.ts';
 import type Anthropic from '@anthropic-ai/sdk';
+import { withEnv } from './helpers/with-env.ts';
 
 let engine: PGLiteEngine;
 let queue: MinionQueue;
@@ -469,9 +470,7 @@ describe('subagent handler OpenAI-compatible provider', () => {
   });
 
   test('uses GBRAIN_SUBAGENT_MODEL as the OpenAI-compatible default when job data omits model', async () => {
-    const prior = process.env.GBRAIN_SUBAGENT_MODEL;
-    process.env.GBRAIN_SUBAGENT_MODEL = 'kimi-k2.6';
-    try {
+    await withEnv({ GBRAIN_SUBAGENT_MODEL: 'kimi-k2.6' }, async () => {
       const openaiClient = new FakeOpenAIChatClient([
         { message: { role: 'assistant', content: 'env model ok' } },
       ]);
@@ -487,10 +486,7 @@ describe('subagent handler OpenAI-compatible provider', () => {
 
       expect(result.result).toBe('env model ok');
       expect(openaiClient.calls[0]!.model).toBe('kimi-k2.6');
-    } finally {
-      if (prior === undefined) delete process.env.GBRAIN_SUBAGENT_MODEL;
-      else process.env.GBRAIN_SUBAGENT_MODEL = prior;
-    }
+    });
   });
 
   test('tool call response maps OpenAI function tool calls into Anthropic-style replay rows', async () => {

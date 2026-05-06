@@ -16,7 +16,6 @@ import { dedupResults } from './search/dedup.ts';
 import { captureEvalCandidate, isEvalCaptureEnabled, isEvalScrubEnabled } from './eval-capture.ts';
 import type { HybridSearchMeta } from './types.ts';
 import { extractPageLinks, isAutoLinkEnabled, isAutoTimelineEnabled, parseTimelineEntries, makeResolver, type UnresolvedFrontmatterRef } from './link-extraction.ts';
-import { resolveEmbeddingConfig } from './config.ts';
 import * as db from './db.ts';
 
 // --- Types ---
@@ -183,6 +182,15 @@ export interface Logger {
 export interface AuthInfo {
   token: string;
   clientId: string;
+  /**
+   * Human-readable agent name resolved at token-verification time.
+   * For OAuth clients this is `oauth_clients.client_name`; for legacy
+   * bearer tokens it is `access_tokens.name`. Threading this through
+   * AuthInfo eliminates a per-request DB roundtrip in the /mcp handler
+   * (was: SELECT client_name FROM oauth_clients WHERE client_id = ?
+   * on every request — see PR #586 review note D14=B).
+   */
+  clientName?: string;
   scopes: string[];
   expiresAt?: number;
 }
@@ -206,9 +214,12 @@ export interface OperationContext {
    * confinement when remote=true and allow unrestricted local-filesystem access
    * when remote=false.
    *
-   * When unset, operations MUST default to the stricter (remote=true) behavior.
+   * REQUIRED as of the F7b hardening — the type system is the first line of defense.
+   * Every transport (CLI / stdio MCP / HTTP MCP / subagent dispatcher) sets this
+   * explicitly. Consumers still treat anything that isn't strictly `false` as
+   * remote/untrusted (defense in depth in case the type is bypassed via cast).
    */
-  remote?: boolean;
+  remote: boolean;
   /**
    * Subagent runtime context (v0.16+). Set by the subagent tool dispatcher when
    * dispatching an op as a tool call from an LLM loop. Used to enforce per-op
@@ -285,22 +296,24 @@ export interface Operation {
 
 const get_page: Operation = {
   name: 'get_page',
-  description: 'Read a page by slug (supports optional fuzzy matching)',
+  description: 'Read a page by slug (supports optional fuzzy matching). Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated (see v0.26.5 recovery window).',
   params: {
     slug: { type: 'string', required: true, description: 'Page slug' },
     fuzzy: { type: 'boolean', description: 'Enable fuzzy slug resolution (default: false)' },
+    include_deleted: { type: 'boolean', description: 'v0.26.5: surface soft-deleted pages with deleted_at populated (default: false). Used by restore workflows.' },
   },
   handler: async (ctx, p) => {
     const slug = p.slug as string;
     const fuzzy = (p.fuzzy as boolean) || false;
+    const includeDeleted = (p.include_deleted as boolean) === true;
 
-    let page = await ctx.engine.getPage(slug);
+    let page = await ctx.engine.getPage(slug, { includeDeleted });
     let resolved_slug: string | undefined;
 
     if (!page && fuzzy) {
       const candidates = await ctx.engine.resolveSlugs(slug);
       if (candidates.length === 1) {
-        page = await ctx.engine.getPage(candidates[0]);
+        page = await ctx.engine.getPage(candidates[0], { includeDeleted });
         resolved_slug = candidates[0];
       } else if (candidates.length > 1) {
         return { error: 'ambiguous_slug', candidates };
@@ -308,7 +321,7 @@ const get_page: Operation = {
     }
 
     if (!page) {
-      throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug or use fuzzy: true');
+      throw new OperationError('page_not_found', `Page not found: ${slug}`, includeDeleted ? 'Check the slug or use fuzzy: true' : 'Page may be soft-deleted; pass include_deleted: true to verify');
     }
 
     const tags = await ctx.engine.getTags(page.slug);
@@ -329,6 +342,7 @@ const put_page: Operation = {
   scope: 'write',
   handler: async (ctx, p) => {
     const slug = p.slug as string;
+
     // Subagent namespace enforcement (v0.15+). Runs BEFORE the dry-run
     // short-circuit so preview calls surface the same rejection. Confines
     // LLM-driven writes to wiki/agents/<subagentId>/... — no leading slash
@@ -363,14 +377,11 @@ const put_page: Operation = {
     }
 
     if (ctx.dryRun) return { dry_run: true, action: 'put_page', slug: p.slug };
-    // Skip embedding when no embedding provider is configured. Checks config
-    // file + env so that keys / base URLs stored in ~/.gbrain/config.json work
-    // without requiring the user to also export env vars. Without either a real
-    // key or a local base URL, the client would attempt 5 retries with
-    // exponential backoff (up to ~2 minutes total) before giving up.
-    const embedCfg = resolveEmbeddingConfig();
-    const hasRealApiKey = embedCfg.apiKey !== 'sk-local';
-    const noEmbed = !(hasRealApiKey || embedCfg.baseURL);
+    // Skip embedding when the AI gateway has no embedding provider configured.
+    // Checks all auth env vars for the resolved provider, not just OPENAI_API_KEY,
+    // so Gemini / Ollama / Voyage brains don't silently drop embeddings (Codex C2).
+    const { isAvailable } = await import('./ai/gateway.ts');
+    const noEmbed = !isAvailable('embedding');
     const result = await importFromContent(ctx.engine, slug, p.content as string, { noEmbed });
 
     // Auto-link post-hook: runs AFTER importFromContent (which is its own
@@ -399,7 +410,7 @@ const put_page: Operation = {
     const trustedWorkspace = ctx.viaSubagent === true
       && Array.isArray(ctx.allowedSlugPrefixes)
       && ctx.allowedSlugPrefixes.length > 0;
-    if (ctx.remote === true && !trustedWorkspace) {
+    if (ctx.remote !== false && !trustedWorkspace) {
       autoLinks = { skipped: 'remote' };
       autoTimeline = { skipped: 'remote' };
     } else if (result.parsedPage) {
@@ -619,39 +630,99 @@ async function runAutoLink(
 
 const delete_page: Operation = {
   name: 'delete_page',
-  description: 'Delete a page',
+  description: 'Soft-delete a page. The row is hidden from search and from get_page/list_pages, but is recoverable via restore_page within 72h. The autopilot purge phase hard-deletes after the recovery window. Pass include_deleted: true to get_page to verify the soft-delete landed.',
   params: {
     slug: { type: 'string', required: true },
   },
   mutating: true,
   scope: 'write',
   handler: async (ctx, p) => {
-    if (ctx.dryRun) return { dry_run: true, action: 'delete_page', slug: p.slug };
-    await ctx.engine.deletePage(p.slug as string);
-    return { status: 'deleted' };
+    const slug = p.slug as string;
+    if (ctx.dryRun) return { dry_run: true, action: 'soft_delete_page', slug };
+    // v0.26.5: rewired from hard-delete to soft-delete. The hard-delete primitive
+    // (engine.deletePage) is now reserved for purgeDeletedPages and explicit
+    // tests. softDeletePage returns null when the slug is unknown OR already
+    // soft-deleted (idempotent-as-null) — preserve that as a clean no-op shape.
+    const result = await ctx.engine.softDeletePage(slug);
+    if (result === null) {
+      // Distinguish "not found" from "already soft-deleted" so the agent gets a
+      // clear signal. Probe once with include_deleted to disambiguate.
+      const existing = await ctx.engine.getPage(slug, { includeDeleted: true });
+      if (!existing) {
+        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug.');
+      }
+      return { status: 'already_soft_deleted', slug, deleted_at: existing.deleted_at };
+    }
+    return { status: 'soft_deleted', slug, recoverable_until: 'now + 72h via restore_page' };
   },
   cliHints: { name: 'delete', positional: ['slug'] },
 };
 
+const restore_page: Operation = {
+  name: 'restore_page',
+  description: 'v0.26.5 — restore a soft-deleted page (clear deleted_at). Returns success only if the page was actually soft-deleted. After this op, the page reappears in search and in get_page/list_pages without the include_deleted flag.',
+  params: {
+    slug: { type: 'string', required: true },
+  },
+  mutating: true,
+  scope: 'write',
+  handler: async (ctx, p) => {
+    const slug = p.slug as string;
+    if (ctx.dryRun) return { dry_run: true, action: 'restore_page', slug };
+    const ok = await ctx.engine.restorePage(slug);
+    if (!ok) {
+      // Distinguish "not found" from "already active" (idempotent-as-false).
+      const existing = await ctx.engine.getPage(slug, { includeDeleted: true });
+      if (!existing) {
+        throw new OperationError('page_not_found', `Page not found: ${slug}`, 'Check the slug.');
+      }
+      return { status: 'already_active', slug };
+    }
+    return { status: 'restored', slug };
+  },
+  cliHints: { name: 'restore', positional: ['slug'] },
+};
+
+const purge_deleted_pages: Operation = {
+  name: 'purge_deleted_pages',
+  description: 'v0.26.5 — admin-only. Hard-deletes pages whose deleted_at is older than older_than_hours (default 72). Cascades through content_chunks, page_links, chunk_relations. Local CLI only (not exposed over HTTP MCP). Manual escape hatch alongside the autopilot purge phase.',
+  params: {
+    older_than_hours: { type: 'number', description: 'Age cutoff in hours. Default 72.' },
+  },
+  mutating: true,
+  scope: 'admin',
+  localOnly: true,
+  handler: async (ctx, p) => {
+    const olderThanHours = (p.older_than_hours as number | undefined) ?? 72;
+    if (ctx.dryRun) return { dry_run: true, action: 'purge_deleted_pages', older_than_hours: olderThanHours };
+    const result = await ctx.engine.purgeDeletedPages(olderThanHours);
+    return { status: 'purged', count: result.count, slugs: result.slugs };
+  },
+  cliHints: { name: 'purge-deleted' },
+};
+
 const list_pages: Operation = {
   name: 'list_pages',
-  description: 'List pages with optional filters',
+  description: 'List pages with optional filters. Soft-deleted pages are hidden by default; pass include_deleted: true to surface them with deleted_at populated.',
   params: {
     type: { type: 'string', description: 'Filter by page type' },
     tag: { type: 'string', description: 'Filter by tag' },
     limit: { type: 'number', description: 'Max results (default 50)' },
+    include_deleted: { type: 'boolean', description: 'v0.26.5: include soft-deleted pages (default: false). Used by restore workflows and operator diagnostics.' },
   },
   handler: async (ctx, p) => {
     const pages = await ctx.engine.listPages({
       type: p.type as any,
       tag: p.tag as string,
       limit: clampSearchLimit(p.limit as number | undefined, 50, 100),
+      includeDeleted: (p.include_deleted as boolean) === true,
     });
     return pages.map(pg => ({
       slug: pg.slug,
       type: pg.type,
       title: pg.title,
       updated_at: pg.updated_at,
+      ...(pg.deleted_at ? { deleted_at: pg.deleted_at } : {}),
     }));
   },
   scope: 'read',
@@ -1320,16 +1391,19 @@ const submit_job: Operation = {
     // GBRAIN_ALLOW_SHELL_JOBS env flag — even if that flag is on, MCP callers
     // cannot submit protected-type jobs.
     const { isProtectedJobName } = await import('./minions/protected-names.ts');
-    if (ctx.remote && isProtectedJobName(name)) {
+    // F7b fail-closed: anything that is not strictly false (i.e., remote=true OR
+    // the field somehow leaks in undefined despite the required type) rejects
+    // protected job submissions. Closes the HTTP MCP shell-job RCE that surfaced
+    // when the HTTP transport's OperationContext literal forgot to set remote.
+    if (ctx.remote !== false && isProtectedJobName(name)) {
       throw new OperationError('permission_denied', `'${name}' jobs cannot be submitted over MCP (CLI-only for security)`);
     }
 
     const { MinionQueue } = await import('./minions/queue.ts');
     const queue = new MinionQueue(ctx.engine);
-    // Trusted flag set only when this is a local (non-remote) submission. When
-    // remote=true, the guard above has already thrown for protected names, so
-    // passing undefined here is safe for any non-protected name that slips by.
-    const trusted = !ctx.remote && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
+    // Trusted flag fires ONLY for an explicit local CLI submission of a protected
+    // name. Strict `=== false` so an untyped/cast context can't escalate.
+    const trusted = ctx.remote === false && isProtectedJobName(name) ? { allowProtectedSubmit: true } : undefined;
     return queue.add(name, (p.data as Record<string, unknown>) || {}, {
       queue: (p.queue as string) || 'default',
       priority: (p.priority as number) || 0,
@@ -1523,6 +1597,8 @@ const find_orphans: Operation = {
 export const operations: Operation[] = [
   // Page CRUD
   get_page, put_page, delete_page, list_pages,
+  // v0.26.5 destructive-guard ops (page-level soft-delete + recovery + admin purge)
+  restore_page, purge_deleted_pages,
   // Search
   search, query,
   // Tags

@@ -39,6 +39,14 @@ CREATE TABLE IF NOT EXISTS sources (
   -- bypassing the git-HEAD up_to_date early-return so CHUNKER_VERSION bumps
   -- actually trigger re-chunking on upgrade.
   chunker_version TEXT,
+  -- v0.26.5: soft-delete + recovery window. \`archive\` flips archived=true and
+  -- sets archive_expires_at = now() + 72h. The autopilot purge phase
+  -- hard-deletes rows where archive_expires_at <= now(). Promoted from a
+  -- JSONB key to real columns to avoid reserved-key footguns and to make the
+  -- search visibility filter (\`NOT s.archived\`) a column lookup.
+  archived            BOOLEAN NOT NULL DEFAULT false,
+  archived_at         TIMESTAMPTZ,
+  archive_expires_at  TIMESTAMPTZ,
   created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -75,6 +83,11 @@ CREATE TABLE IF NOT EXISTS pages (
   content_hash  TEXT,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- v0.26.5: soft-delete + recovery window. \`delete_page\` sets deleted_at = now()
+  -- instead of issuing DELETE. The autopilot purge phase hard-deletes pages
+  -- where deleted_at < now() - 72h. Search and \`get_page\` filter
+  -- \`WHERE deleted_at IS NULL\` by default; \`include_deleted: true\` opts in.
+  deleted_at    TIMESTAMPTZ,
   CONSTRAINT pages_source_slug_key UNIQUE (source_id, slug)
 );
 
@@ -85,6 +98,13 @@ CREATE INDEX IF NOT EXISTS idx_pages_trgm ON pages USING GIN(title gin_trgm_ops)
 CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
 -- v0.18.0: source-scoped scans (per /plan-eng-review Section 4).
 CREATE INDEX IF NOT EXISTS idx_pages_source_id ON pages(source_id);
+-- v0.26.5: partial index supports the autopilot purge sweep
+-- (\`WHERE deleted_at IS NOT NULL AND deleted_at < now() - INTERVAL '72 hours'\`).
+-- Search filters (\`WHERE deleted_at IS NULL\`) do not benefit from this index
+-- (predicate doesn't match) and don't need their own — soft-deleted cardinality
+-- stays low. Don't add a regular \`(deleted_at)\` index without measuring.
+CREATE INDEX IF NOT EXISTS pages_deleted_at_purge_idx
+  ON pages (deleted_at) WHERE deleted_at IS NOT NULL;
 
 -- ============================================================
 -- content_chunks: chunked content with embeddings
@@ -95,8 +115,8 @@ CREATE TABLE IF NOT EXISTS content_chunks (
   chunk_index           INTEGER NOT NULL,
   chunk_text            TEXT    NOT NULL,
   chunk_source          TEXT    NOT NULL DEFAULT 'compiled_truth',
-  embedding             vector({{EMBEDDING_DIM}}),
-  model                 TEXT    NOT NULL DEFAULT '{{EMBEDDING_MODEL}}',
+  embedding             vector(1536),
+  model                 TEXT    NOT NULL DEFAULT 'text-embedding-3-large',
   token_count           INTEGER,
   embedded_at           TIMESTAMPTZ,
   created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -320,8 +340,8 @@ CREATE TABLE IF NOT EXISTS config (
 
 INSERT INTO config (key, value) VALUES
   ('version', '1'),
-  ('embedding_model', '{{EMBEDDING_MODEL}}'),
-  ('embedding_dimensions', '{{EMBEDDING_DIM}}'),
+  ('embedding_model', 'text-embedding-3-large'),
+  ('embedding_dimensions', '1536'),
   ('chunk_strategy', 'semantic')
 ON CONFLICT (key) DO NOTHING;
 
@@ -344,12 +364,15 @@ CREATE INDEX IF NOT EXISTS idx_access_tokens_hash ON access_tokens (token_hash) 
 -- mcp_request_log: usage logging for remote MCP requests
 -- ============================================================
 CREATE TABLE IF NOT EXISTS mcp_request_log (
-  id         SERIAL PRIMARY KEY,
-  token_name TEXT,
-  operation  TEXT NOT NULL,
-  latency_ms INTEGER,
-  status     TEXT NOT NULL DEFAULT 'success',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  id            SERIAL PRIMARY KEY,
+  token_name    TEXT,
+  agent_name    TEXT,
+  operation     TEXT NOT NULL,
+  latency_ms    INTEGER,
+  status        TEXT NOT NULL DEFAULT 'success',
+  params        JSONB,
+  error_message TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ============================================================
@@ -365,6 +388,8 @@ CREATE TABLE IF NOT EXISTS oauth_clients (
   token_endpoint_auth_method TEXT,
   client_id_issued_at     BIGINT,
   client_secret_expires_at BIGINT,
+  token_ttl               INTEGER,
+  deleted_at              TIMESTAMPTZ,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -394,8 +419,9 @@ CREATE TABLE IF NOT EXISTS oauth_codes (
   created_at             TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Composite index for admin dashboard request log queries
+-- Composite indexes for admin dashboard request log queries
 CREATE INDEX IF NOT EXISTS idx_mcp_log_time_agent ON mcp_request_log(created_at, token_name);
+CREATE INDEX IF NOT EXISTS idx_mcp_log_agent_time ON mcp_request_log(agent_name, created_at DESC);
 
 -- ============================================================
 -- files: binary attachments stored in Supabase Storage
@@ -596,7 +622,13 @@ CREATE TABLE IF NOT EXISTS subagent_messages (
   job_id              BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
   message_idx         INTEGER     NOT NULL,
   role                TEXT        NOT NULL,
+  -- v0.27+ stores provider-neutral ChatBlock[] when schema_version=2; legacy
+  -- Anthropic-shape blocks when schema_version=1 (pre-v0.27 jobs replay).
   content_blocks      JSONB       NOT NULL,
+  schema_version      INTEGER     NOT NULL DEFAULT 1,
+  -- Recipe id of the provider that produced this turn (e.g. 'anthropic',
+  -- 'openai', 'deepseek'). NULL on legacy v1 rows; set on v2.
+  provider_id         TEXT,
   tokens_in           INTEGER,
   tokens_out          INTEGER,
   tokens_cache_read   INTEGER,
@@ -607,22 +639,25 @@ CREATE TABLE IF NOT EXISTS subagent_messages (
   CONSTRAINT chk_subagent_messages_role CHECK (role IN ('user','assistant'))
 );
 CREATE INDEX IF NOT EXISTS idx_subagent_messages_job ON subagent_messages (job_id, message_idx);
+CREATE INDEX IF NOT EXISTS idx_subagent_messages_provider ON subagent_messages (job_id, provider_id);
 
 -- Two-phase tool execution ledger. Before tool call: INSERT status='pending'.
 -- After success: UPDATE to 'complete' + output. On failure: 'failed' + error.
 -- Replay re-runs 'pending' rows only if the tool is idempotent.
 CREATE TABLE IF NOT EXISTS subagent_tool_executions (
-  id           BIGSERIAL PRIMARY KEY,
-  job_id       BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
-  message_idx  INTEGER     NOT NULL,
-  tool_use_id  TEXT        NOT NULL,
-  tool_name    TEXT        NOT NULL,
-  input        JSONB       NOT NULL,
-  status       TEXT        NOT NULL,
-  output       JSONB,
-  error        TEXT,
-  started_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-  ended_at     TIMESTAMPTZ,
+  id              BIGSERIAL PRIMARY KEY,
+  job_id          BIGINT      NOT NULL REFERENCES minion_jobs(id) ON DELETE CASCADE,
+  message_idx     INTEGER     NOT NULL,
+  tool_use_id     TEXT        NOT NULL,
+  tool_name       TEXT        NOT NULL,
+  input           JSONB       NOT NULL,
+  status          TEXT        NOT NULL,
+  output          JSONB,
+  error           TEXT,
+  schema_version  INTEGER     NOT NULL DEFAULT 1,
+  provider_id     TEXT,
+  started_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  ended_at        TIMESTAMPTZ,
   CONSTRAINT uniq_subagent_tools_use_id UNIQUE (job_id, tool_use_id),
   CONSTRAINT chk_subagent_tools_status CHECK (status IN ('pending','complete','failed'))
 );

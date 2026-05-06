@@ -1,15 +1,18 @@
 # Setting up kbrain with OpenCode Go
 
 This guide installs the kbrain CLI on a Mac, points it at a Tailscale Postgres
-backend, and routes chat-model calls through an **OpenCode Go** subscription.
-Embeddings stay on Ollama because OpenCode Go does not serve embedding models.
+backend, and routes chat-model calls through an **OpenCode Go** subscription via
+the v0.27 AI Gateway. Embeddings stay on Ollama because OpenCode Go does not
+serve embedding models.
 
 End state per device:
 - `gbrain` CLI on PATH
 - all Macs share the same brain (Postgres over Tailscale = single source of truth)
 - subagents and query expansion use OpenCode Go's OpenAI-compatible chat endpoint
+  via the bundled `opencode-go` recipe in `src/core/ai/recipes/opencode-go.ts`
 - embeddings use Ollama over Tailscale (`mxbai-embed-large`, 1024 dimensions)
-- per-client secret: OpenCode Go API key
+- per-client secret: OpenCode Go API key (read by the recipe from
+  `OPENCODE_GO_API_KEY`)
 
 ## Prerequisites
 
@@ -42,6 +45,8 @@ End state per device:
 
 - `bun` on PATH — `curl -fsSL https://bun.sh/install | bash`
 - `psql` on PATH — `brew install libpq && brew link --force libpq`
+- `jq` on PATH — `brew install jq` (the installer writes file-plane gateway
+  config via jq)
 - Network reachability to Tailscale Postgres (5432) and Ollama (11434)
 - An **OpenCode Go** subscription — sign up at https://opencode.ai/zen
 
@@ -66,27 +71,23 @@ Edit `.env` and fill in:
 ```bash
 OPENCODE_GO_API_KEY=***
 GBRAIN_DATABASE_URL=postgresql://kbrain:***@postgres.your-tailnet.ts.net:5432/kbrain?sslmode=disable
-EMBEDDING_BASE_URL=http://ollama.your-tailnet.ts.net:11434/v1
-OPENAI_BASE_URL=http://ollama.your-tailnet.ts.net:11434/v1
+OLLAMA_BASE_URL=http://ollama.your-tailnet.ts.net:11434/v1
 ```
 
-The OpenCode Go settings should use the raw OpenAI-compatible API shape:
+The v0.27 gateway picks each model via a `<recipe-id>:<model-id>` string. The
+example file ships with a working OpenCode Go + Ollama selection:
 
 ```bash
-GBRAIN_SUBAGENT_PROVIDER=openai-compat
-GBRAIN_SUBAGENT_BASE_URL=https://opencode.ai/zen/go/v1
-GBRAIN_SUBAGENT_API_KEY=${OPENCODE_GO_API_KEY}
-GBRAIN_SUBAGENT_MODEL=kimi-k2.6
-
-EXPANSION_PROVIDER=openai-compat
-EXPANSION_BASE_URL=https://opencode.ai/zen/go/v1
-EXPANSION_API_KEY=${OPENCODE_GO_API_KEY}
-EXPANSION_MODEL=deepseek-v4-flash
+GBRAIN_CHAT_MODEL=opencode-go:kimi-k2.6
+GBRAIN_EXPANSION_MODEL=opencode-go:deepseek-v4-flash
+GBRAIN_EMBEDDING_MODEL=ollama:mxbai-embed-large
+GBRAIN_EMBEDDING_DIMENSIONS=1024
 ```
 
-Do **not** configure OpenCode Go as Anthropic Messages API. For raw HTTP calls,
-OpenCode Go is OpenAI-compatible chat completions and expects `x-api-key`, not
-Anthropic Messages-style bearer-only auth.
+The `opencode-go` recipe is `tier: openai-compat` with chat + expansion
+touchpoints declared. It defaults to `https://opencode.ai/zen/go/v1`; override
+via `OPENCODE_GO_BASE_URL` only if you proxy the endpoint. Authentication is
+read by the recipe from the `OPENCODE_GO_API_KEY` env snapshot.
 
 `.env` is gitignored. Never commit it.
 
@@ -97,16 +98,21 @@ Anthropic Messages-style bearer-only auth.
 ```
 
 The script:
-1. Verifies prereqs (`bun`, `psql`, `curl`)
-2. Loads `.env` and validates placeholders are filled
+1. Verifies prereqs (`bun`, `psql`, `curl`, `python3`, `jq`)
+2. Loads `.env` and validates that all gateway-relevant env vars are set
 3. Probes Postgres + pgvector
 4. Probes OpenCode Go with a real `/chat/completions` request using `x-api-key`
 5. Probes Tailscale Ollama and verifies embedding dimensions
 6. Builds the kbrain CLI (`bun install` + `bun run build` + `bun link`)
 7. Runs `gbrain init --non-interactive` against Postgres
-8. Sets dream model config keys to OpenCode Go raw model IDs
-9. Runs `gbrain doctor --json` to verify health
-10. Registers the gbrain MCP server with Claude Code and Codex if their CLIs are on PATH
+8. Writes the gateway selection (`chat_model`, `expansion_model`,
+   `embedding_model`, `embedding_dimensions`, `provider_base_urls.ollama`) to
+   `~/.gbrain/config.json` via jq
+9. Sets dream model config keys to the same `<recipe>:<model>` strings via
+   `gbrain config set` (DB plane, separate from the gateway file plane)
+10. Runs `gbrain doctor --json` to verify health
+11. Registers the gbrain MCP server with Claude Code and Codex if their CLIs
+    are on PATH
 
 Use `--dry-run` to preview without executing.
 
@@ -122,21 +128,25 @@ echo "set -a; . $HOME/kbrain/.env; set +a" >> ~/.zshrc
 Reload your shell or `source ~/.zshrc`. Verify:
 
 ```bash
-echo $GBRAIN_SUBAGENT_PROVIDER     # -> openai-compat
-echo $GBRAIN_SUBAGENT_BASE_URL     # -> https://opencode.ai/zen/go/v1
-gbrain doctor                      # -> status: ok, or only known warnings
+echo $GBRAIN_CHAT_MODEL            # -> opencode-go:kimi-k2.6
+echo $GBRAIN_EMBEDDING_MODEL       # -> ollama:mxbai-embed-large
+gbrain doctor                       # -> status: ok, or only known warnings
 ```
 
 ## What got configured
 
-| Surface | Provider | Model |
+| Surface | Recipe | Model |
 |---|---|---|
-| Subagent (Minions handler, signal-detector) | OpenCode Go `/chat/completions` | `kimi-k2.6` |
-| Search expansion | OpenCode Go `/chat/completions` | `deepseek-v4-flash` |
-| Dream synthesize | OpenCode Go `/chat/completions` | `kimi-k2.6` |
-| Dream verdict | OpenCode Go `/chat/completions` | `deepseek-v4-flash` |
-| Dream patterns | OpenCode Go `/chat/completions` | `kimi-k2.6` |
-| Embeddings | Tailscale Ollama | `mxbai-embed-large` (1024d) |
+| Subagent (Minions handler, signal-detector) | `opencode-go` | `kimi-k2.6` |
+| Search expansion | `opencode-go` | `deepseek-v4-flash` |
+| Dream synthesize | `opencode-go` | `kimi-k2.6` |
+| Dream verdict | `opencode-go` | `deepseek-v4-flash` |
+| Dream patterns | `opencode-go` | `kimi-k2.6` |
+| Embeddings | `ollama` | `mxbai-embed-large` (1024d) |
+
+The gateway resolves recipes from `src/core/ai/recipes/`. Adding another
+OpenAI-compatible provider is a one-file recipe + a registration entry in
+`src/core/ai/recipes/index.ts`.
 
 ## Verifying multi-device sync
 
@@ -158,14 +168,14 @@ because the Tailscale Postgres backend stores the shared embeddings.
 Pick a different OpenCode Go model:
 
 ```bash
-gbrain config set dream.synthesize.model deepseek-v4
-gbrain config set dream.synthesize.verdict_model qwen3.6-plus
+gbrain config set dream.synthesize.model         opencode-go:deepseek-v4
+gbrain config set dream.synthesize.verdict_model opencode-go:qwen3.6-plus
 ```
 
-Or override per shell:
+Or override per shell (env wins over file plane):
 
 ```bash
-export GBRAIN_SUBAGENT_MODEL=glm-5.1
+export GBRAIN_CHAT_MODEL=opencode-go:glm-5.1
 gbrain agent run "summarize my last 10 pages"
 ```
 
@@ -177,15 +187,17 @@ current list and per-model rate budgets.
 If you cancel Go or want to A/B against Sonnet for a session:
 
 ```bash
-unset GBRAIN_SUBAGENT_PROVIDER GBRAIN_SUBAGENT_BASE_URL GBRAIN_SUBAGENT_API_KEY GBRAIN_SUBAGENT_MODEL
-unset EXPANSION_PROVIDER EXPANSION_BASE_URL EXPANSION_API_KEY EXPANSION_MODEL
+unset GBRAIN_CHAT_MODEL GBRAIN_EXPANSION_MODEL
 export ANTHROPIC_API_KEY=***
 
 # Reset config keys to upstream defaults
-gbrain config set dream.synthesize.model         claude-sonnet-4-6
-gbrain config set dream.synthesize.verdict_model claude-haiku-4-5-20251001
-gbrain config set dream.patterns.model           claude-sonnet-4-6
+gbrain config set dream.synthesize.model         anthropic:claude-sonnet-4-6
+gbrain config set dream.synthesize.verdict_model anthropic:claude-haiku-4-5-20251001
+gbrain config set dream.patterns.model           anthropic:claude-sonnet-4-6
 ```
+
+To swap the gateway file-plane defaults too, edit `~/.gbrain/config.json` (or
+re-run the installer with new `.env` values).
 
 ## Troubleshooting
 
@@ -203,7 +215,7 @@ API key is wrong or revoked. Regenerate it at https://opencode.ai/zen and update
 ### OpenCode Go probe returns 400 with "model not found"
 
 Go renamed or removed the model. Check https://opencode.ai/docs/go for the
-current model list and update `GBRAIN_SUBAGENT_MODEL` / `EXPANSION_MODEL`.
+current model list and update `GBRAIN_CHAT_MODEL` / `GBRAIN_EXPANSION_MODEL`.
 
 ### Embedding calls fail with "connection refused"
 
@@ -218,8 +230,8 @@ interface or `0.0.0.0:11434`, not only `127.0.0.1`.
 
 ### Embedding dimension mismatch
 
-This setup uses `mxbai-embed-large` with `EMBEDDING_DIMENSIONS=1024`. If you
-change embedding models, update the dimension and rebuild/re-embed a fresh
+This setup uses `mxbai-embed-large` with `GBRAIN_EMBEDDING_DIMENSIONS=1024`. If
+you change embedding models, update the dimension and rebuild/re-embed a fresh
 pgvector column; one vector column cannot mix dimensions.
 
 ## Next steps

@@ -1,40 +1,48 @@
 import { SCHEMA_SQL } from './schema-embedded.ts';
-import { PGLITE_SCHEMA_SQL } from './pglite-schema.ts';
-import { resolveEmbeddingConfig } from './config.ts';
+import { getPGLiteSchema } from './pglite-schema.ts';
+
+const DEFAULT_DIMS = 1536;
+const DEFAULT_MODEL = 'text-embedding-3-large';
 
 /**
- * Substitute {{EMBEDDING_DIM}} and {{EMBEDDING_MODEL}} placeholders in the
- * canonical schema with actual embedding config values.
+ * Substitute embedding dim + model into the canonical Postgres schema SQL.
  *
- * Defaults (1536 / text-embedding-3-large) preserve backward compatibility
- * with brains initialized before this substitution layer existed — existing
- * brains created with those values continue to work without migration.
+ * Upstream's pattern: literal `vector(1536)` + `'text-embedding-3-large'` in the
+ * source schema, replaced at render time. Defaults preserve backward compat with
+ * brains initialized before this layer existed.
  */
 export function renderSchema(opts: { dimensions?: number; model?: string } = {}): string {
-  return substitute(SCHEMA_SQL, opts);
+  const { dim, model } = resolve(opts);
+  return SCHEMA_SQL
+    .replace(/vector\(1536\)/g, `vector(${dim})`)
+    .replace(/'text-embedding-3-large'/g, `'${model.replace(/'/g, "''")}'`);
 }
 
+/** PGLite path delegates to upstream's substitution helper. */
 export function renderPGLiteSchema(opts: { dimensions?: number; model?: string } = {}): string {
-  return substitute(PGLITE_SCHEMA_SQL, opts);
+  const { dim, model } = resolve(opts);
+  return getPGLiteSchema(dim, model);
 }
 
-function substitute(sql: string, opts: { dimensions?: number; model?: string }): string {
-  const cfg = resolveEmbeddingConfig();
-  const dim = opts.dimensions ?? cfg.dimensions;
-  const model = opts.model ?? cfg.model;
-
+function resolve(opts: { dimensions?: number; model?: string }): { dim: number; model: string } {
+  let dim = opts.dimensions ?? DEFAULT_DIMS;
+  let model = opts.model ?? DEFAULT_MODEL;
+  if (opts.dimensions === undefined || opts.model === undefined) {
+    try {
+      const gw = require('./ai/gateway.ts');
+      if (opts.dimensions === undefined) dim = gw.getEmbeddingDimensions();
+      if (opts.model === undefined) {
+        const m = gw.getEmbeddingModel();
+        model = m.split(':').slice(1).join(':') || m;
+      }
+    } catch {
+      // Gateway not configured (e.g. tests, init pre-config) — defaults.
+    }
+  }
   if (!Number.isInteger(dim) || dim <= 0 || dim > 16000) {
     throw new Error(
-      `Invalid embedding dimensions: ${dim}. Must be a positive integer (pgvector caps at 16000).`
+      `Invalid embedding dimensions: ${dim}. Must be a positive integer (pgvector caps at 16000).`,
     );
   }
-  // SQL-escape the model value since it's substituted inside single-quoted SQL
-  // DEFAULT clauses. Without escaping, a model name containing a single quote
-  // would break schema init or become a SQL-injection vector when conn.unsafe()
-  // executes the rendered DDL.
-  const escapedModel = model.replace(/'/g, "''");
-
-  return sql
-    .replace(/\{\{EMBEDDING_DIM\}\}/g, String(dim))
-    .replace(/\{\{EMBEDDING_MODEL\}\}/g, escapedModel);
+  return { dim, model };
 }

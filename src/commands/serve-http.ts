@@ -15,7 +15,7 @@ import type { Request, Response, NextFunction } from 'express';
 import cookieParser from 'cookie-parser';
 import cors from 'cors';
 import rateLimit from 'express-rate-limit';
-import { randomBytes, createHash } from 'crypto';
+import { randomBytes, createHash, timingSafeEqual } from 'crypto';
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js';
@@ -25,7 +25,10 @@ import type { BrainEngine } from '../core/engine.ts';
 import { operations, OperationError } from '../core/operations.ts';
 import type { OperationContext, AuthInfo } from '../core/operations.ts';
 import { GBrainOAuthProvider } from '../core/oauth-provider.ts';
+import type { SqlQuery } from '../core/oauth-provider.ts';
+import { summarizeMcpParams } from '../mcp/dispatch.ts';
 import { loadConfig } from '../core/config.ts';
+import { buildError, serializeError } from '../core/errors.ts';
 import { VERSION } from '../version.ts';
 import * as db from '../core/db.ts';
 
@@ -41,19 +44,39 @@ interface ServeHttpOptions {
    * issuer claim in tokens MUST match the discovery URL clients hit.
    */
   publicUrl?: string;
+  /**
+   * When true, write raw request payloads to mcp_request_log + the admin SSE
+   * feed. Default false: payloads are summarized via dispatch.summarizeMcpParams
+   * (declared keys only, no values, no attacker-controlled key names).
+   *
+   * Operators running gbrain on their own laptop and debugging agent behavior
+   * can flip this on with `--log-full-params`. The flag prints a loud warning
+   * at startup so the privacy posture change is visible.
+   */
+  logFullParams?: boolean;
 }
 
 export async function runServeHttp(engine: BrainEngine, options: ServeHttpOptions) {
-  const { port, tokenTtl, enableDcr, publicUrl } = options;
+  const { port, tokenTtl, enableDcr, publicUrl, logFullParams } = options;
   const config = loadConfig() || { engine: 'pglite' as const };
 
-  // Get raw SQL connection for OAuth provider
-  const sql = db.getConnection();
+  if (logFullParams) {
+    console.error(
+      '[serve-http] WARNING: --log-full-params writes raw request payloads to mcp_request_log + SSE feed. Disable for shared dashboards or production.',
+    );
+  }
 
-  // Initialize OAuth provider
+  // Get raw SQL connection for OAuth provider
+  const sql = db.getConnection() as SqlQuery;
+
+  // Initialize OAuth provider. F12 cleanup: DCR-disable now flips a
+  // constructor option instead of monkey-patching `_clientsStore` after
+  // construction. Same outcome (no /register endpoint when --enable-dcr
+  // is not passed); cleaner shape for tests and future maintainers.
   const oauthProvider = new GBrainOAuthProvider({
-    sql: sql as any,
+    sql,
     tokenTtl,
+    dcrDisabled: !enableDcr,
   });
 
   // Sweep expired tokens on startup (non-blocking)
@@ -110,6 +133,19 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     message: { error: 'too_many_requests', error_description: 'Rate limit exceeded. Try again in 15 minutes.' },
   });
 
+  // Magic-link rate limiter: 10 requests/min/IP. The bootstrap token is
+  // 64-char hex (unguessable) so brute-forcing is computationally
+  // infeasible — but a misconfigured client looping on /admin/auth/:bad
+  // could DoS the server's CPU on sha256 + the inline HTML response.
+  // Defense-in-depth on the highest-privileged URL the server exposes.
+  const adminAuthRateLimiter = rateLimit({
+    windowMs: 60 * 1000,
+    max: 10,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: 'Too many magic-link attempts. Wait a minute before trying again.',
+  });
+
   app.post('/token', ccRateLimiter, express.urlencoded({ extended: false }), async (req, res, next) => {
     if (req.body?.grant_type !== 'client_credentials') {
       return next(); // Fall through to SDK's token handler
@@ -139,6 +175,20 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // reverse proxies / tunnels; default to localhost for dev.
   const issuerUrl = new URL(publicUrl || `http://localhost:${port}`);
 
+  // F9: cookie `secure` flag honors both the request's TLS state (req.secure
+  // is set when express trust-proxy lands an X-Forwarded-Proto: https) AND
+  // the operator's declared issuer protocol (so a Cloudflare-tunnel deploy
+  // where the connection inside the tunnel looks like http but the public
+  // URL is https still tags cookies Secure). Without this, an attacker on
+  // the network path could MITM the admin cookie over plaintext.
+  const adminCookie = (req: Request, maxAge: number) => ({
+    httpOnly: true,
+    sameSite: 'strict' as const,
+    secure: req.secure || issuerUrl.protocol === 'https:',
+    maxAge,
+    path: '/admin',
+  });
+
   const authRouterOptions: any = {
     provider: oauthProvider,
     issuerUrl,
@@ -146,15 +196,10 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     resourceName: 'GBrain MCP Server',
   };
 
-  // Disable DCR by removing registerClient from the clients store
-  if (!enableDcr) {
-    // Override the provider's clientsStore to remove registerClient
-    const originalStore = oauthProvider.clientsStore;
-    (oauthProvider as any)._clientsStore = {
-      getClient: originalStore.getClient.bind(originalStore),
-      // No registerClient = DCR disabled
-    };
-  }
+  // F12: DCR disable lives on the provider's constructor option above. The
+  // SDK's mcpAuthRouter reads provider.clientsStore once and only wires up
+  // /register when the store exposes registerClient — so passing dcrDisabled
+  // to the constructor is sufficient. No monkey-patching here.
 
   const authRouter = mcpAuthRouter(authRouterOptions);
 
@@ -191,15 +236,26 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // Admin authentication (cookie-based)
   // ---------------------------------------------------------------------------
+  // POST /admin/login — JSON body with token (for programmatic/UI login)
+  // Constant-time hex compare. Both inputs are sha256 hex (64 chars),
+  // so they're always equal length. timingSafeEqual throws on length
+  // mismatch — we already short-circuit on non-string above. Catches
+  // would-be timing oracles even though the inputs are pre-hashed
+  // (defense-in-depth on the hash bits).
+  function safeHexEqual(a: string, b: string): boolean {
+    if (a.length !== b.length) return false;
+    return timingSafeEqual(Buffer.from(a, 'hex'), Buffer.from(b, 'hex'));
+  }
+
   app.post('/admin/login', express.json(), (req, res) => {
     const token = req.body?.token;
-    if (!token) {
+    if (!token || typeof token !== 'string') {
       res.status(400).json({ error: 'Token required' });
       return;
     }
 
     const tokenHash = createHash('sha256').update(token).digest('hex');
-    if (tokenHash !== bootstrapHash) {
+    if (!safeHexEqual(tokenHash, bootstrapHash)) {
       res.status(401).json({ error: 'Invalid token. Check your terminal output.' });
       return;
     }
@@ -208,13 +264,119 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
     const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
     adminSessions.set(sessionId, expiresAt);
 
-    res.cookie('gbrain_admin', sessionId, {
-      httpOnly: true,
-      sameSite: 'strict',
-      maxAge: 24 * 60 * 60 * 1000,
-      path: '/admin',
-    });
+    res.cookie('gbrain_admin', sessionId, adminCookie(req, 24 * 60 * 60 * 1000));
     res.json({ status: 'authenticated' });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Magic-link nonce store (single-use) — D11 + D12
+  //
+  // Trust model (codex review pushback resolved this):
+  //   - Bootstrap token is the long-term server admin secret. Printed to
+  //     stderr at startup; lives in operator's terminal scrollback only.
+  //   - Magic-link URLs use one-time NONCES (not the bootstrap token).
+  //     Agent calls POST /admin/api/issue-magic-link with the bootstrap
+  //     token in Authorization: Bearer to mint a nonce. Nonce expires in
+  //     5 minutes if unredeemed; consumed on first redemption.
+  //   - Bootstrap token never appears in a URL → no leakage via browser
+  //     history, proxy access logs, or Referer headers.
+  //   - Cookie sessions are HttpOnly + SameSite=Strict, but the bootstrap
+  //     token itself is never client-side-readable JS state (no
+  //     localStorage/sessionStorage cache — D12).
+  //
+  // Memory bound: nonces auto-purged on expiry sweep + LRU cap of 1000
+  // entries (an attacker minting millions can't OOM the server).
+  // ---------------------------------------------------------------------------
+  const magicLinkNonces = new Map<string, number>(); // nonce → expiresAt
+  const consumedNonces = new Set<string>();
+  const NONCE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+  const NONCE_LRU_CAP = 1000;
+
+  // Best-effort GC: remove expired entries on each issue/redeem call.
+  function pruneExpiredNonces() {
+    const now = Date.now();
+    for (const [nonce, expiresAt] of magicLinkNonces) {
+      if (expiresAt < now) magicLinkNonces.delete(nonce);
+    }
+    // F10: bound the live-nonce store too. An attacker with the bootstrap
+    // token (or a misbehaving agent) could mint nonces faster than they
+    // expire. Map iteration order is insertion order, so dropping from the
+    // front gives a simple FIFO eviction matching the consumedNonces pattern.
+    if (magicLinkNonces.size > NONCE_LRU_CAP) {
+      const drop = magicLinkNonces.size - NONCE_LRU_CAP;
+      const it = magicLinkNonces.keys();
+      for (let i = 0; i < drop; i++) magicLinkNonces.delete(it.next().value as string);
+    }
+    // Cap consumedNonces growth — drop oldest entries past the LRU cap.
+    if (consumedNonces.size > NONCE_LRU_CAP) {
+      const drop = consumedNonces.size - NONCE_LRU_CAP;
+      const it = consumedNonces.values();
+      for (let i = 0; i < drop; i++) consumedNonces.delete(it.next().value as string);
+    }
+  }
+
+  // POST /admin/api/issue-magic-link — agent-callable mint endpoint.
+  // Auth: Authorization: Bearer <bootstrapToken>. Returns one-time nonce.
+  app.post('/admin/api/issue-magic-link', express.json(), (req: Request, res: Response) => {
+    const auth = (req.headers.authorization || '') as string;
+    const m = auth.match(/^Bearer\s+(\S+)$/i);
+    if (!m) {
+      res.status(401).json({ error: 'Authorization: Bearer <bootstrap-token> required' });
+      return;
+    }
+    const tokenHash = createHash('sha256').update(m[1]).digest('hex');
+    if (!safeHexEqual(tokenHash, bootstrapHash)) {
+      res.status(401).json({ error: 'Invalid bootstrap token' });
+      return;
+    }
+    pruneExpiredNonces();
+    const nonce = randomBytes(32).toString('hex');
+    magicLinkNonces.set(nonce, Date.now() + NONCE_TTL_MS);
+    const baseUrl = publicUrl || `http://localhost:${port}`;
+    res.json({ url: `${baseUrl}/admin/auth/${nonce}`, expires_in: NONCE_TTL_MS / 1000 });
+  });
+
+  // GET /admin/auth/:nonce — single-use magic link redemption.
+  // Browser hits it, server validates the nonce (exists + unconsumed +
+  // unexpired), marks consumed, sets cookie, redirects to dashboard.
+  // Rate-limited at 10/min/IP to harden against DoS via bad-token loops.
+  app.get('/admin/auth/:token', adminAuthRateLimiter, (req: Request, res: Response) => {
+    const nonce = String(req.params.token ?? '');
+    pruneExpiredNonces();
+
+    const expiresAt = magicLinkNonces.get(nonce);
+    const isValid = !!nonce && !!expiresAt && expiresAt > Date.now() && !consumedNonces.has(nonce);
+
+    if (!isValid) {
+      res.status(401).send(`<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GBrain</title>
+<style>*{margin:0;padding:0;box-sizing:border-box}body{font-family:'Inter',-apple-system,BlinkMacSystemFont,sans-serif;background:#0a0a0f;color:#e0e0e0;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.box{max-width:400px;padding:32px;text-align:left}
+.logo{font-size:28px;font-weight:600;margin-bottom:24px}
+.msg{color:#888;font-size:14px;line-height:1.6;margin-bottom:20px}
+.hint{background:rgba(136,170,255,0.08);border:1px solid rgba(136,170,255,0.2);border-radius:8px;padding:14px 16px;font-size:13px;line-height:1.5;color:#888}
+.hint b{color:#e0e0e0}
+.prompt{background:rgba(0,0,0,0.3);border-radius:6px;padding:8px 12px;margin-top:8px;font-family:monospace;font-size:12px;color:#88aaff}
+</style></head><body><div class="box">
+<div class="logo">GBrain</div>
+<div class="msg">⚠️ This admin link has expired, was already used, or the server has restarted.</div>
+<div class="hint"><b>Get a fresh link from your AI agent:</b>
+<div class="prompt">&ldquo;Give me the GBrain admin login link&rdquo;</div>
+</div></div></body></html>`);
+      return;
+    }
+
+    // Consume the nonce — it's single-use, second click will fail.
+    magicLinkNonces.delete(nonce);
+    consumedNonces.add(nonce);
+
+    const sessionId = randomBytes(32).toString('hex');
+    const sessionExpiresAt = Date.now() + 7 * 24 * 60 * 60 * 1000; // 7 days for magic link
+    adminSessions.set(sessionId, sessionExpiresAt);
+
+    res.cookie('gbrain_admin', sessionId, adminCookie(req, 7 * 24 * 60 * 60 * 1000));
+    res.redirect('/admin/');
   });
 
   // Admin auth middleware
@@ -236,13 +398,39 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   // ---------------------------------------------------------------------------
   // Admin API endpoints
   // ---------------------------------------------------------------------------
+
+  // Sign-out-everywhere: nuke ALL active admin sessions in-memory. Every
+  // browser/tab fails its next request, gets 401, redirects to login.
+  // The bootstrap token itself is unaffected (still valid for new
+  // magic-link mints) — this only revokes existing cookie sessions.
+  app.post('/admin/api/sign-out-everywhere', requireAdmin, (_req: Request, res: Response) => {
+    const count = adminSessions.size;
+    adminSessions.clear();
+    res.json({ revoked_sessions: count });
+  });
+
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const agents = await sql`
-        SELECT client_id, client_name, grant_types, scope, created_at
-        FROM oauth_clients ORDER BY created_at DESC
+      // Unified view: OAuth clients + legacy API keys
+      const oauthClients = await sql`
+        SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
+          c.grant_types, c.scope, c.created_at, c.token_ttl,
+          CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+          (SELECT max(created_at) FROM mcp_request_log WHERE token_name = c.client_id) as last_used_at,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id) as total_requests,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
+        FROM oauth_clients c ORDER BY c.created_at DESC
       `;
-      res.json(agents);
+      const legacyKeys = await sql`
+        SELECT a.id, a.name, 'api_key' as auth_type,
+          '{"bearer"}' as grant_types, 'read write admin' as scope, a.created_at, null as token_ttl,
+          CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
+          a.last_used_at,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name) as total_requests,
+          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name AND created_at > now() - interval '24 hours') as requests_today
+        FROM access_tokens a ORDER BY a.created_at DESC
+      `;
+      res.json([...oauthClients, ...legacyKeys]);
     } catch (e) {
       res.status(503).json({ error: 'service_unavailable' });
     }
@@ -253,9 +441,11 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const [clients] = await sql`SELECT count(*)::int as count FROM oauth_clients`;
       const [tokens] = await sql`SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at > ${Math.floor(Date.now() / 1000)}`;
       const [requests] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'`;
+      const [apiKeys] = await sql`SELECT count(*)::int as count FROM access_tokens WHERE revoked_at IS NULL`;
       res.json({
         connected_agents: (clients as any).count,
         active_tokens: (tokens as any).count,
+        active_api_keys: (apiKeys as any).count,
         requests_today: (requests as any).count,
       });
     } catch {
@@ -288,37 +478,115 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
       const operation = req.query.operation as string;
       const status = req.query.status as string;
 
-      let query = `SELECT * FROM mcp_request_log WHERE 1=1`;
-      const params: unknown[] = [];
-      let paramIdx = 1;
+      // Dynamic filtering via postgres.js tagged-template fragments.
+      // Each filter expands to either `AND col = $N` (parameterized) or
+      // an empty fragment. `WHERE 1=1` lets us always have a WHERE clause
+      // and unconditionally append AND-prefixed fragments — no string
+      // interpolation, no manual escaping, no sql.unsafe.
+      const agentFilter = agent && agent !== 'all' ? sql`AND token_name = ${agent}` : sql``;
+      const opFilter = operation && operation !== 'all' ? sql`AND operation = ${operation}` : sql``;
+      const statusFilter = status && status !== 'all' ? sql`AND status = ${status}` : sql``;
 
-      if (agent && agent !== 'all') { query += ` AND token_name = $${paramIdx++}`; params.push(agent); }
-      if (operation && operation !== 'all') { query += ` AND operation = $${paramIdx++}`; params.push(operation); }
-      if (status && status !== 'all') { query += ` AND status = $${paramIdx++}`; params.push(status); }
-
-      query += ` ORDER BY created_at DESC LIMIT $${paramIdx++} OFFSET $${paramIdx++}`;
-      params.push(limit, offset);
-
-      // Use raw query for dynamic filtering
-      const rows = await sql`SELECT * FROM mcp_request_log ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
-      const [countResult] = await sql`SELECT count(*)::int as total FROM mcp_request_log`;
+      const rows = await sql`
+        SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
+               operation, latency_ms, status, params, error_message, created_at
+        FROM mcp_request_log
+        WHERE 1=1 ${agentFilter} ${opFilter} ${statusFilter}
+        ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}
+      `;
+      const [countResult] = await sql`
+        SELECT count(*)::int as total FROM mcp_request_log
+        WHERE 1=1 ${agentFilter} ${opFilter} ${statusFilter}
+      `;
       res.json({ rows, total: (countResult as any).total, page, pages: Math.ceil((countResult as any).total / limit) });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
     }
   });
 
+  // Legacy API keys (access_tokens table)
+  app.get('/admin/api/api-keys', requireAdmin, async (_req: Request, res: Response) => {
+    try {
+      const keys = await sql`
+        SELECT id, name, created_at, last_used_at,
+          CASE WHEN revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status
+        FROM access_tokens ORDER BY created_at DESC
+      `;
+      res.json(keys);
+    } catch (e) {
+      res.status(503).json({ error: 'service_unavailable' });
+    }
+  });
+
+  app.post('/admin/api/api-keys', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { name } = req.body;
+      if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      const { generateToken, hashToken } = await import('../core/utils.ts');
+      const token = generateToken('gbrain_');
+      const hash = hashToken(token);
+      const id = (await import('crypto')).randomUUID();
+      await sql`INSERT INTO access_tokens (id, name, token_hash) VALUES (${id}, ${name}, ${hash})`;
+      res.json({ name, token, id });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Failed to create API key' });
+    }
+  });
+
+  app.post('/admin/api/api-keys/revoke', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { name } = req.body;
+      if (!name) { res.status(400).json({ error: 'Name required' }); return; }
+      await sql`UPDATE access_tokens SET revoked_at = now() WHERE name = ${name} AND revoked_at IS NULL`;
+      res.json({ revoked: true });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
+    }
+  });
+
   // Register client from admin dashboard
   app.post('/admin/api/register-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
     try {
-      const { name, scopes } = req.body;
+      const { name, scopes, tokenTtl } = req.body;
       if (!name) { res.status(400).json({ error: 'Name required' }); return; }
       const result = await oauthProvider.registerClientManual(
         name, ['client_credentials'], scopes || 'read', [],
       );
-      res.json(result);
+      // Set per-client TTL if specified
+      if (tokenTtl && Number(tokenTtl) > 0) {
+        await sql`UPDATE oauth_clients SET token_ttl = ${Number(tokenTtl)} WHERE client_id = ${result.clientId}`;
+      }
+      res.json({ ...result, tokenTtl: tokenTtl ? Number(tokenTtl) : null });
     } catch (e) {
       res.status(500).json({ error: e instanceof Error ? e.message : 'Registration failed' });
+    }
+  });
+
+  // Update client TTL
+  app.post('/admin/api/update-client-ttl', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { clientId, tokenTtl } = req.body;
+      if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
+      const ttl = tokenTtl === null || tokenTtl === 0 ? null : Number(tokenTtl);
+      await sql`UPDATE oauth_clients SET token_ttl = ${ttl} WHERE client_id = ${clientId}`;
+      res.json({ updated: true, tokenTtl: ttl });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Update failed' });
+    }
+  });
+
+  // Revoke OAuth client
+  app.post('/admin/api/revoke-client', requireAdmin, express.json(), async (req: Request, res: Response) => {
+    try {
+      const { clientId } = req.body;
+      if (!clientId) { res.status(400).json({ error: 'clientId required' }); return; }
+      // Soft-delete the client
+      await sql`UPDATE oauth_clients SET deleted_at = now() WHERE client_id = ${clientId} AND deleted_at IS NULL`;
+      // Revoke all active tokens for this client
+      await sql`DELETE FROM oauth_tokens WHERE client_id = ${clientId}`;
+      res.json({ revoked: true });
+    } catch (e) {
+      res.status(500).json({ error: e instanceof Error ? e.message : 'Revoke failed' });
     }
   });
 
@@ -362,6 +630,12 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
   app.post('/mcp', requireBearerAuth({ verifier: oauthProvider }), async (req: Request, res: Response) => {
     const startTime = Date.now();
     const authInfo = (req as any).auth as AuthInfo;
+
+    // Human-readable agent name is now threaded through AuthInfo by
+    // verifyAccessToken (which JOINs oauth_clients in its existing token
+    // SELECT). No per-request DB roundtrip needed. Falls back to clientId
+    // for legacy tokens or when the JOIN row's client_name is NULL.
+    const agentName = authInfo.clientName ?? authInfo.clientId;
 
     // Create a fresh MCP server per request (stateless)
     const server = new Server(
@@ -420,22 +694,40 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
           error: (msg: string) => console.error(`[ERROR] ${msg}`),
         },
         dryRun: !!(params?.dry_run),
+        // F7: HTTP MCP is the untrusted/agent-facing transport. Stdio MCP at
+        // src/mcp/dispatch.ts:61 sets this; the inlined HTTP context-builder
+        // forgot it for several releases, which let HTTP MCP callers with a
+        // read+write token submit `shell` jobs and execute arbitrary commands
+        // on the host (RCE). The fail-closed contract in operations.ts is the
+        // belt; this is the suspenders.
+        remote: true,
         auth: authInfo,
       };
+
+      // F8: redact request payload by default (declared keys only via the
+      // op's `params` allow-list; values + attacker-controlled key names
+      // never written to mcp_request_log or the SSE feed). --log-full-params
+      // bypasses this for operators debugging on their own laptop, with the
+      // startup warning printed earlier.
+      const safeParamsSummary = summarizeMcpParams(name, params);
+      const logParams = logFullParams
+        ? (params ? JSON.stringify(params) : null)
+        : (safeParamsSummary ? JSON.stringify(safeParamsSummary) : null);
+      const broadcastParams = logFullParams ? (params || {}) : safeParamsSummary;
 
       try {
         const result = await op.handler(ctx, (params || {}) as Record<string, unknown>);
         const latency = Date.now() - startTime;
 
-        // Log request + broadcast to SSE
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-                    VALUES (${authInfo.clientId}, ${name}, ${latency}, ${'success'})`;
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'success'}, ${logParams})`;
         } catch { /* best effort */ }
 
         broadcastEvent({
-          agent: authInfo.clientId,
+          agent: agentName,
           operation: name,
+          params: broadcastParams,
           scopes: authInfo.scopes.join(','),
           latency_ms: latency,
           status: 'success',
@@ -445,29 +737,61 @@ export async function runServeHttp(engine: BrainEngine, options: ServeHttpOption
         return { content: [{ type: 'text', text: JSON.stringify(result) }] };
       } catch (e) {
         const latency = Date.now() - startTime;
-        const error = e instanceof OperationError ? e.toJSON() : { error: 'internal_error', message: e instanceof Error ? e.message : 'Unknown error' };
-
+        // F15: unify error envelope. Both OperationError and unexpected
+        // exceptions go through src/core/errors.ts so clients see a single
+        // shape ({class, code, message, hint}). Pre-fix, OperationError
+        // serialized via e.toJSON() and other exceptions used a hand-rolled
+        // {error, message} envelope — a client couldn't pattern-match
+        // reliably across the two.
+        const errorPayload = e instanceof OperationError
+          ? buildError({
+              class: 'OperationError',
+              code: e.code,
+              message: e.message,
+              hint: e.suggestion,
+              docs_url: e.docs,
+            })
+          : serializeError(e);
+        const errMsg = errorPayload.message;
         try {
-          await sql`INSERT INTO mcp_request_log (token_name, operation, latency_ms, status)
-                    VALUES (${authInfo.clientId}, ${name}, ${latency}, ${'error'})`;
+          await sql`INSERT INTO mcp_request_log (token_name, agent_name, operation, latency_ms, status, params, error_message)
+                    VALUES (${authInfo.clientId}, ${agentName}, ${name}, ${latency}, ${'error'}, ${logParams}, ${errMsg})`;
         } catch { /* best effort */ }
 
         broadcastEvent({
-          agent: authInfo.clientId,
+          agent: agentName,
           operation: name,
+          params: broadcastParams,
+          scopes: authInfo.scopes.join(','),
           latency_ms: latency,
           status: 'error',
+          error: errorPayload,
           timestamp: new Date().toISOString(),
         });
 
-        return { content: [{ type: 'text', text: JSON.stringify(error) }], isError: true };
+        return { content: [{ type: 'text', text: JSON.stringify({ error: errorPayload }) }], isError: true };
       }
     });
 
-    // Use StreamableHTTPServerTransport for stateless request handling
-    const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined as any });
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
+    // F14: wrap transport setup + handleRequest in try/catch. Without this,
+    // an SDK-level throw (e.g., schema parse failure on a malformed request)
+    // propagates to express's default error handler, which renders an HTML
+    // error page — clients expecting JSON-RPC envelopes break. On
+    // !res.headersSent we emit a minimal JSON 500 so the client at least
+    // gets parseable JSON back.
+    try {
+      const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined as any });
+      await server.connect(transport);
+      await transport.handleRequest(req, res, req.body);
+    } catch (e) {
+      console.error('MCP request handler error:', e instanceof Error ? e.message : e);
+      if (!res.headersSent) {
+        res.status(500).json({
+          error: 'internal_error',
+          message: e instanceof Error ? e.message : 'Unknown error',
+        });
+      }
+    }
   });
 
   // ---------------------------------------------------------------------------
