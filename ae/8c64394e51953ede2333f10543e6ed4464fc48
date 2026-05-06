@@ -1,0 +1,23 @@
+test/subagent-handler.test.ts
+  a8bda51e66ae6637 25,473,489
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "ae8c64394e51953ede2333f10543e6ed4464fc48",
+  "prompts": {
+    "a8bda51e66ae6637": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d6e189a5-286f-48de-98dd-ccdcea2256d8",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "Donovan Yohan",
+      "messages": [],
+      "total_additions": 3,
+      "total_deletions": 7,
+      "accepted_lines": 3,
+      "overriden_lines": 0
+    }
+  }
+}
