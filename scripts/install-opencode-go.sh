@@ -14,6 +14,7 @@
 #   - bun on PATH
 #   - psql on PATH
 #   - curl on PATH
+#   - jq on PATH (for writing ~/.gbrain/config.json)
 #   - .env file present with placeholders filled
 #   - Tailscale Postgres reachable + pgvector available
 #   - Tailscale Ollama reachable + embedding model pulled
@@ -95,14 +96,20 @@ strip_v1_suffix() {
   printf '%s' "$1" | sed -E 's|/v1/?$||'
 }
 
+parse_model_id() {
+  # Splits "recipe:model" into raw model id (after the colon).
+  printf '%s' "$1" | sed -E 's|^[^:]+:||'
+}
+
 # ── Step 1: prereqs ────────────────────────────────────────────
 log "Checking prerequisites"
 command -v bun  >/dev/null 2>&1 || fail "bun not on PATH. Install: curl -fsSL https://bun.sh/install | bash" 2
 command -v psql >/dev/null 2>&1 || fail "psql not on PATH. Install postgresql-client (brew install libpq && brew link --force libpq)." 2
 command -v curl >/dev/null 2>&1 || fail "curl not on PATH." 2
 command -v python3 >/dev/null 2>&1 || fail "python3 not on PATH." 2
+command -v jq >/dev/null 2>&1 || fail "jq not on PATH. Install: brew install jq." 2
 [ -f "$ENV_FILE" ] || fail ".env file not found at $ENV_FILE. Copy .env.opencode-go.example and fill in placeholders." 2
-pass "bun + psql + curl + python3 present"
+pass "bun + psql + curl + python3 + jq present"
 
 # ── Step 2: load env ───────────────────────────────────────────
 log "Loading $ENV_FILE"
@@ -117,6 +124,7 @@ case "$OPENCODE_GO_API_KEY" in
   REPLACE_*|*PLACEHOLDER*|*YOUR_*|""|*...*)
     fail "OPENCODE_GO_API_KEY still has placeholder value. Edit $ENV_FILE." 3 ;;
 esac
+export OPENCODE_GO_API_KEY
 
 [ -n "${GBRAIN_DATABASE_URL:-}" ] || fail "GBRAIN_DATABASE_URL is empty in $ENV_FILE" 3
 case "$GBRAIN_DATABASE_URL" in
@@ -125,29 +133,34 @@ case "$GBRAIN_DATABASE_URL" in
 esac
 export GBRAIN_DATABASE_URL
 
-[ "${GBRAIN_SUBAGENT_PROVIDER:-}" = "openai-compat" ] || fail "GBRAIN_SUBAGENT_PROVIDER must be openai-compat for OpenCode Go." 3
-[ -n "${GBRAIN_SUBAGENT_BASE_URL:-}" ] || fail "GBRAIN_SUBAGENT_BASE_URL is empty" 3
-[ -n "${GBRAIN_SUBAGENT_API_KEY:-}" ] || fail "GBRAIN_SUBAGENT_API_KEY is empty (should expand from OPENCODE_GO_API_KEY)" 3
-[ -n "${GBRAIN_SUBAGENT_MODEL:-}" ] || fail "GBRAIN_SUBAGENT_MODEL is empty" 3
-case "$GBRAIN_SUBAGENT_MODEL" in
-  opencode-go/*)
-    fail "GBRAIN_SUBAGENT_MODEL must be a raw OpenCode Go model ID like kimi-k2.6, not opencode-go/*" 3 ;;
+# v0.27 gateway model selection — provider:model id format.
+[ -n "${GBRAIN_CHAT_MODEL:-}" ] || fail "GBRAIN_CHAT_MODEL is empty (expected e.g. opencode-go:kimi-k2.6)" 3
+[ -n "${GBRAIN_EXPANSION_MODEL:-}" ] || fail "GBRAIN_EXPANSION_MODEL is empty (expected e.g. opencode-go:deepseek-v4-flash)" 3
+[ -n "${GBRAIN_EMBEDDING_MODEL:-}" ] || fail "GBRAIN_EMBEDDING_MODEL is empty (expected e.g. ollama:mxbai-embed-large)" 3
+[ -n "${GBRAIN_EMBEDDING_DIMENSIONS:-}" ] || fail "GBRAIN_EMBEDDING_DIMENSIONS is empty (expected e.g. 1024)" 3
+
+case "$GBRAIN_CHAT_MODEL" in
+  opencode-go:*) ;;
+  *) warn "GBRAIN_CHAT_MODEL=$GBRAIN_CHAT_MODEL — expected opencode-go:* recipe id; routing may not hit OpenCode Go." ;;
+esac
+case "$GBRAIN_EMBEDDING_MODEL" in
+  *:*) ;;
+  *) fail "GBRAIN_EMBEDDING_MODEL must be in <recipe>:<model> form, got: $GBRAIN_EMBEDDING_MODEL" 3 ;;
+esac
+case "$GBRAIN_EMBEDDING_DIMENSIONS" in
+  ''|*[!0-9]*) fail "GBRAIN_EMBEDDING_DIMENSIONS must be a positive integer, got: $GBRAIN_EMBEDDING_DIMENSIONS" 3 ;;
 esac
 
-[ "${EXPANSION_PROVIDER:-}" = "openai-compat" ] || fail "EXPANSION_PROVIDER must be openai-compat for OpenCode Go." 3
-[ -n "${EXPANSION_BASE_URL:-}" ] || fail "EXPANSION_BASE_URL is empty" 3
-[ -n "${EXPANSION_API_KEY:-}" ] || fail "EXPANSION_API_KEY is empty (should expand from OPENCODE_GO_API_KEY)" 3
-[ -n "${EXPANSION_MODEL:-}" ] || fail "EXPANSION_MODEL is empty" 3
-case "$EXPANSION_MODEL" in
-  opencode-go/*)
-    fail "EXPANSION_MODEL must be a raw OpenCode Go model ID like deepseek-v4-flash, not opencode-go/*" 3 ;;
-esac
+[ -n "${OLLAMA_BASE_URL:-}" ] || fail "OLLAMA_BASE_URL is empty (expected http://OLLAMA_HOST:11434/v1)" 3
 
-[ -n "${EMBEDDING_BASE_URL:-}" ] || fail "EMBEDDING_BASE_URL is empty" 3
-[ -n "${EMBEDDING_MODEL:-}" ] || fail "EMBEDDING_MODEL is empty" 3
-[ "${EMBEDDING_MODEL:-}" = "mxbai-embed-large" ] || warn "EMBEDDING_MODEL is $EMBEDDING_MODEL; expected mxbai-embed-large for this setup."
-[ "${EMBEDDING_DIMENSIONS:-}" = "1024" ] || fail "EMBEDDING_DIMENSIONS must be 1024 for mxbai-embed-large." 3
-pass "env loaded — Go key + Postgres URL + OpenCode + embedding config all set"
+# Optional override; defaults to recipe base_url_default.
+OPENCODE_GO_BASE_URL="${OPENCODE_GO_BASE_URL:-https://opencode.ai/zen/go/v1}"
+
+CHAT_MODEL_RAW="$(parse_model_id "$GBRAIN_CHAT_MODEL")"
+EXPANSION_MODEL_RAW="$(parse_model_id "$GBRAIN_EXPANSION_MODEL")"
+EMBEDDING_MODEL_RAW="$(parse_model_id "$GBRAIN_EMBEDDING_MODEL")"
+
+pass "env loaded — Go key + Postgres URL + gateway model selection valid"
 
 # ── Step 3: connectivity probes ────────────────────────────────
 log "Probing Postgres + pgvector"
@@ -165,14 +178,14 @@ else
 fi
 
 log "Probing OpenCode Go chat completions"
-GO_CHAT_URL="${GBRAIN_SUBAGENT_BASE_URL%/}/chat/completions"
-GO_TEST_BODY='{"model":"'"${GBRAIN_SUBAGENT_MODEL}"'","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}'
+GO_CHAT_URL="${OPENCODE_GO_BASE_URL%/}/chat/completions"
+GO_TEST_BODY='{"model":"'"${CHAT_MODEL_RAW}"'","max_tokens":16,"messages":[{"role":"user","content":"ping"}]}'
 if [ "$DRY_RUN" = "true" ]; then
   echo "  [dry-run] curl -H \"x-api-key: [REDACTED]\" \"$GO_CHAT_URL\""
 else
   GO_PROBE_FILE="/tmp/go-probe.$$"
   GO_PROBE_STATUS=$(curl -s -o "$GO_PROBE_FILE" -w '%{http_code}' \
-    -H "x-api-key: $GBRAIN_SUBAGENT_API_KEY" \
+    -H "x-api-key: $OPENCODE_GO_API_KEY" \
     -H "Content-Type: application/json" \
     "$GO_CHAT_URL" \
     -d "$GO_TEST_BODY" || echo "000")
@@ -180,27 +193,27 @@ else
     echo "Response body:" >&2
     sed -E 's/(api[_-]?key|token|secret|password)[^[:space:]"]*/\1=[REDACTED]/Ig' "$GO_PROBE_FILE" >&2 || true
     rm -f "$GO_PROBE_FILE"
-    fail "OpenCode Go probe returned HTTP $GO_PROBE_STATUS (expected 200). Check API key, model name, and GBRAIN_SUBAGENT_BASE_URL." 4
+    fail "OpenCode Go probe returned HTTP $GO_PROBE_STATUS (expected 200). Check API key, model name, and OPENCODE_GO_BASE_URL." 4
   fi
   rm -f "$GO_PROBE_FILE"
-  pass "OpenCode Go reachable + key valid + $GBRAIN_SUBAGENT_MODEL responding"
+  pass "OpenCode Go reachable + key valid + $CHAT_MODEL_RAW responding"
 fi
 
 log "Probing Tailscale Ollama embeddings"
-OLLAMA_ROOT="$(strip_v1_suffix "$EMBEDDING_BASE_URL")"
+OLLAMA_ROOT="$(strip_v1_suffix "$OLLAMA_BASE_URL")"
 if [ "$DRY_RUN" = "true" ]; then
   echo "  [dry-run] curl \"$OLLAMA_ROOT/api/tags\""
-  echo "  [dry-run] curl \"$EMBEDDING_BASE_URL/embeddings\""
+  echo "  [dry-run] curl \"$OLLAMA_BASE_URL/embeddings\""
 else
   if ! curl -fsS -m 10 "$OLLAMA_ROOT/api/tags" >/dev/null 2>&1 \
-     && ! curl -fsS -m 10 "${EMBEDDING_BASE_URL%/}/models" >/dev/null 2>&1; then
-    warn "Ollama at $EMBEDDING_BASE_URL not reachable. Embeddings will fail until you fix this. Continuing anyway."
+     && ! curl -fsS -m 10 "${OLLAMA_BASE_URL%/}/models" >/dev/null 2>&1; then
+    warn "Ollama at $OLLAMA_BASE_URL not reachable. Embeddings will fail until you fix this. Continuing anyway."
   else
     EMBED_FILE="/tmp/embed-probe.$$"
     EMBED_STATUS=$(curl -s -o "$EMBED_FILE" -w '%{http_code}' \
       -H 'Content-Type: application/json' \
-      -d '{"model":"'"$EMBEDDING_MODEL"'","input":"ping"}' \
-      "${EMBEDDING_BASE_URL%/}/embeddings" || echo "000")
+      -d '{"model":"'"$EMBEDDING_MODEL_RAW"'","input":"ping"}' \
+      "${OLLAMA_BASE_URL%/}/embeddings" || echo "000")
     if [ "$EMBED_STATUS" = "200" ]; then
       EMBED_DIMS=$(python3 - "$EMBED_FILE" <<'PY'
 import json, sys
@@ -208,8 +221,8 @@ body = json.load(open(sys.argv[1]))
 print(len(body["data"][0]["embedding"]))
 PY
 )
-      [ "$EMBED_DIMS" = "$EMBEDDING_DIMENSIONS" ] || fail "Embedding dimension mismatch: got $EMBED_DIMS, expected $EMBEDDING_DIMENSIONS" 4
-      pass "Ollama reachable + $EMBEDDING_MODEL returns ${EMBED_DIMS}d embeddings"
+      [ "$EMBED_DIMS" = "$GBRAIN_EMBEDDING_DIMENSIONS" ] || fail "Embedding dimension mismatch: got $EMBED_DIMS, expected $GBRAIN_EMBEDDING_DIMENSIONS" 4
+      pass "Ollama reachable + $EMBEDDING_MODEL_RAW returns ${EMBED_DIMS}d embeddings"
     else
       warn "Ollama embedding probe returned HTTP $EMBED_STATUS. Continuing, but embedding may fail."
     fi
@@ -251,15 +264,49 @@ else
 fi
 pass "kbrain initialized at $(redact_url "$GBRAIN_DATABASE_URL")"
 
-# ── Step 6: apply non-secret config ────────────────────────────
-log "Applying model config"
-run env GBRAIN_DATABASE_URL="$GBRAIN_DATABASE_URL" gbrain config set expansion_provider "$EXPANSION_PROVIDER"
-run env GBRAIN_DATABASE_URL="$GBRAIN_DATABASE_URL" gbrain config set expansion_base_url "$EXPANSION_BASE_URL"
-run env GBRAIN_DATABASE_URL="$GBRAIN_DATABASE_URL" gbrain config set expansion_model "$EXPANSION_MODEL"
-run env GBRAIN_DATABASE_URL="$GBRAIN_DATABASE_URL" gbrain config set dream.synthesize.model "$GBRAIN_SUBAGENT_MODEL"
-run env GBRAIN_DATABASE_URL="$GBRAIN_DATABASE_URL" gbrain config set dream.synthesize.verdict_model "$EXPANSION_MODEL"
-run env GBRAIN_DATABASE_URL="$GBRAIN_DATABASE_URL" gbrain config set dream.patterns.model "$GBRAIN_SUBAGENT_MODEL"
-pass "model config keys applied; API keys stay in local .env"
+# ── Step 6: write file-plane gateway config ────────────────────
+log "Writing AI Gateway config to ~/.gbrain/config.json"
+GBRAIN_CONFIG_DIR="${GBRAIN_HOME:-$HOME}/.gbrain"
+GBRAIN_CONFIG_FILE="$GBRAIN_CONFIG_DIR/config.json"
+
+if [ "$DRY_RUN" = "true" ]; then
+  echo "  [dry-run] mkdir -p $GBRAIN_CONFIG_DIR"
+  echo "  [dry-run] jq merge: chat_model=$GBRAIN_CHAT_MODEL, expansion_model=$GBRAIN_EXPANSION_MODEL"
+  echo "  [dry-run] jq merge: embedding_model=$GBRAIN_EMBEDDING_MODEL, embedding_dimensions=$GBRAIN_EMBEDDING_DIMENSIONS"
+  echo "  [dry-run] jq merge: provider_base_urls.ollama=$OLLAMA_BASE_URL"
+  if [ "$OPENCODE_GO_BASE_URL" != "https://opencode.ai/zen/go/v1" ]; then
+    echo "  [dry-run] jq merge: provider_base_urls.opencode-go=$OPENCODE_GO_BASE_URL"
+  fi
+else
+  mkdir -p "$GBRAIN_CONFIG_DIR"
+  [ -f "$GBRAIN_CONFIG_FILE" ] || echo '{}' > "$GBRAIN_CONFIG_FILE"
+
+  TMP_CONFIG="$(mktemp "${TMPDIR:-/tmp}/gbrain-config.XXXXXX")"
+  jq \
+    --arg chat "$GBRAIN_CHAT_MODEL" \
+    --arg expansion "$GBRAIN_EXPANSION_MODEL" \
+    --arg embedding "$GBRAIN_EMBEDDING_MODEL" \
+    --argjson dims "$GBRAIN_EMBEDDING_DIMENSIONS" \
+    --arg ollama_url "$OLLAMA_BASE_URL" \
+    --arg go_url "$OPENCODE_GO_BASE_URL" \
+    '
+    .chat_model = $chat
+    | .expansion_model = $expansion
+    | .embedding_model = $embedding
+    | .embedding_dimensions = $dims
+    | .provider_base_urls = ((.provider_base_urls // {}) + {ollama: $ollama_url})
+    | if $go_url == "https://opencode.ai/zen/go/v1" then . else .provider_base_urls += {"opencode-go": $go_url} end
+    ' "$GBRAIN_CONFIG_FILE" > "$TMP_CONFIG"
+  mv "$TMP_CONFIG" "$GBRAIN_CONFIG_FILE"
+  chmod 600 "$GBRAIN_CONFIG_FILE"
+fi
+
+# Dream config keys live in the DB plane (separate from gateway settings).
+log "Applying dream/autopilot model defaults to DB-plane config"
+run env GBRAIN_DATABASE_URL="$GBRAIN_DATABASE_URL" gbrain config set dream.synthesize.model "$GBRAIN_CHAT_MODEL"
+run env GBRAIN_DATABASE_URL="$GBRAIN_DATABASE_URL" gbrain config set dream.synthesize.verdict_model "$GBRAIN_EXPANSION_MODEL"
+run env GBRAIN_DATABASE_URL="$GBRAIN_DATABASE_URL" gbrain config set dream.patterns.model "$GBRAIN_CHAT_MODEL"
+pass "gateway + dream config applied; API keys stay in local .env"
 
 # ── Step 7: doctor ─────────────────────────────────────────────
 log "Running gbrain doctor"
@@ -318,9 +365,9 @@ ${GREEN}━━━ kbrain + OpenCode Go install complete ━━━${RESET}
 
 Active config:
   Engine:           postgres (Tailscale)
-  Subagent model:   $GBRAIN_SUBAGENT_MODEL via $GBRAIN_SUBAGENT_PROVIDER
-  Expansion model:  $EXPANSION_MODEL via $EXPANSION_PROVIDER
-  Embedding model:  ${EMBEDDING_MODEL} @ ${EMBEDDING_BASE_URL}
+  Chat model:       $GBRAIN_CHAT_MODEL @ $OPENCODE_GO_BASE_URL
+  Expansion model:  $GBRAIN_EXPANSION_MODEL @ $OPENCODE_GO_BASE_URL
+  Embedding model:  $GBRAIN_EMBEDDING_MODEL @ $OLLAMA_BASE_URL (${GBRAIN_EMBEDDING_DIMENSIONS}d)
 
 Source the env in your shell rc to make this permanent:
   printf 'set -a; . %q; set +a\n' "$REPO_ROOT/.env" >> ~/.zshrc

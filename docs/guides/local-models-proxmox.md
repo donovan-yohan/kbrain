@@ -251,31 +251,45 @@ Consider a static lease in your router DHCP or an internal DNS name like
 
 ## Step 7: configure kbrain
 
-On the machine running kbrain, edit `~/.gbrain/config.json`:
+On the machine running kbrain, edit `~/.gbrain/config.json` with the v0.27
+gateway shape (`<recipe>:<model>` strings + `provider_base_urls` overrides):
 
 ```json
 {
   "engine": "pglite",
   "database_path": "/Users/you/.gbrain/brain.pglite",
-  "embedding_base_url": "http://brain.lan:8080/v1",
-  "embedding_model": "Qwen/Qwen3-Embedding-0.6B",
+  "embedding_model": "ollama:Qwen/Qwen3-Embedding-0.6B",
   "embedding_dimensions": 1024,
-  "expansion_provider": "openai-compat",
-  "expansion_base_url": "http://brain.lan:11434/v1",
-  "expansion_model": "qwen2.5:3b-instruct",
-  "expansion_api_key": "sk-local"
+  "expansion_model": "ollama:qwen2.5:3b-instruct",
+  "chat_model": "ollama:qwen2.5:3b-instruct",
+  "provider_base_urls": {
+    "ollama": "http://brain.lan:11434/v1"
+  }
 }
 ```
 
-Or set env vars:
+If your embedder lives on a different port (e.g. an Infinity-style server on
+`:8080/v1`), use the `litellm` recipe for that touchpoint and set its base URL:
+
+```json
+{
+  "embedding_model": "litellm:Qwen/Qwen3-Embedding-0.6B",
+  "expansion_model": "ollama:qwen2.5:3b-instruct",
+  "provider_base_urls": {
+    "litellm": "http://brain.lan:8080/v1",
+    "ollama": "http://brain.lan:11434/v1"
+  }
+}
+```
+
+Or set env vars (env wins over file plane):
 
 ```bash
-export EMBEDDING_BASE_URL=http://brain.lan:8080/v1
-export EMBEDDING_MODEL=Qwen/Qwen3-Embedding-0.6B
-export EMBEDDING_DIMENSIONS=1024
-export EXPANSION_PROVIDER=openai-compat
-export EXPANSION_BASE_URL=http://brain.lan:11434/v1
-export EXPANSION_MODEL=qwen2.5:3b-instruct
+export GBRAIN_EMBEDDING_MODEL=ollama:Qwen/Qwen3-Embedding-0.6B
+export GBRAIN_EMBEDDING_DIMENSIONS=1024
+export GBRAIN_EXPANSION_MODEL=ollama:qwen2.5:3b-instruct
+export GBRAIN_CHAT_MODEL=ollama:qwen2.5:3b-instruct
+# provider_base_urls is file-plane only; edit ~/.gbrain/config.json for those.
 ```
 
 **Important: on a fresh brain, init with the new dimension FIRST.** The schema

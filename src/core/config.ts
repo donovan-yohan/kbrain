@@ -49,6 +49,17 @@ export interface GBrainConfig {
   /** Optional base URL overrides for openai-compatible providers (keyed by recipe id). */
   provider_base_urls?: Record<string, string>;
   /**
+   * Audio transcription (Whisper-style) — fork extension. Not yet routed through
+   * the v0.27 AI gateway. `groq` and `deepgram` use their native SDK shape;
+   * `custom` points at any OpenAI-compatible Whisper endpoint via the
+   * `transcription_base_url` override.
+   */
+  groq_api_key?: string;
+  deepgram_api_key?: string;
+  transcription_base_url?: string;
+  transcription_model?: string;
+  transcription_api_key?: string;
+  /**
    * Optional storage backend config (S3/Supabase/local). Shape matches
    * `StorageConfig` in `./storage.ts`. Typed as `unknown` here to avoid
    * a cyclic import; callers pass this through `createStorage()` which
@@ -102,6 +113,11 @@ export function loadConfig(): GBrainConfig | null {
     ...(process.env.GBRAIN_CHAT_FALLBACK_CHAIN
       ? { chat_fallback_chain: process.env.GBRAIN_CHAT_FALLBACK_CHAIN.split(',').map(s => s.trim()).filter(Boolean) }
       : {}),
+    ...(process.env.GROQ_API_KEY ? { groq_api_key: process.env.GROQ_API_KEY } : {}),
+    ...(process.env.DEEPGRAM_API_KEY ? { deepgram_api_key: process.env.DEEPGRAM_API_KEY } : {}),
+    ...(process.env.TRANSCRIPTION_BASE_URL ? { transcription_base_url: process.env.TRANSCRIPTION_BASE_URL } : {}),
+    ...(process.env.TRANSCRIPTION_MODEL ? { transcription_model: process.env.TRANSCRIPTION_MODEL } : {}),
+    ...(process.env.TRANSCRIPTION_API_KEY ? { transcription_api_key: process.env.TRANSCRIPTION_API_KEY } : {}),
   };
   return merged as GBrainConfig;
 }
